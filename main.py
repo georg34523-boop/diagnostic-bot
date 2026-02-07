@@ -1,12 +1,14 @@
 import os
 import asyncio
 import logging
+import aiohttp
 from datetime import datetime
 from dotenv import load_dotenv
+from io import BytesIO
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from supabase import create_client, Client
 
 load_dotenv()
@@ -349,10 +351,22 @@ async def send_expert_messages():
                         )
                     
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
-                        await bot.send_voice(telegram_id, msg["file_url"])
+                        # Скачиваем файл и отправляем как голосовое
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    audio_data = await resp.read()
+                                    voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                    await bot.send_voice(telegram_id, voice_file)
                     
                     elif msg["content_type"] == "audio" and msg.get("file_url"):
-                        await bot.send_audio(telegram_id, msg["file_url"])
+                        # Скачиваем файл и отправляем как аудио
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    audio_data = await resp.read()
+                                    audio_file = BufferedInputFile(audio_data, filename="audio.mp3")
+                                    await bot.send_audio(telegram_id, audio_file)
                     
                     elif msg["content_type"] == "document" and msg.get("file_url"):
                         await bot.send_document(
