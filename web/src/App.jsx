@@ -355,7 +355,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="Фото" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
                 {msg.content_type === 'video_note' && msg.file_url && (
-                  <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" style={{ borderRadius: '50%' }} onClick={() => window.open(msg.file_url, '_blank')} />
+                  <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />
                 )}
                 {msg.content_type === 'voice' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
                 {msg.content_type === 'audio' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
@@ -397,7 +397,6 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                   muted 
                   playsInline
                   className="w-48 h-48 rounded-full object-cover border-4 border-amber-500"
-                  style={{ transform: 'scaleX(-1)' }}
                 />
                 {isVideoRecording && (
                   <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2">
