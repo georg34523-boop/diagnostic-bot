@@ -108,12 +108,17 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [showSidebar, setShowSidebar] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isVideoRecording, setIsVideoRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [showVideoPreview, setShowVideoPreview] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const videoChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
+  const videoPreviewRef = useRef(null);
+  const videoStreamRef = useRef(null);
 
   useEffect(() => { setNotes(client?.notes || ''); }, [client?.id]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
@@ -223,6 +228,98 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Функции для записи видео-кружочка
+  const startVideoRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 384, height: 384, facingMode: 'user' }, 
+        audio: true 
+      });
+      
+      videoStreamRef.current = stream;
+      setShowVideoPreview(true);
+      
+      // Показываем превью
+      setTimeout(() => {
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = stream;
+        }
+      }, 100);
+      
+      let mimeType = 'video/webm;codecs=vp8,opus';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+        mimeType = 'video/webm;codecs=vp9,opus';
+      } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+        mimeType = 'video/mp4';
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+      videoChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          videoChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const videoBlob = new Blob(videoChunksRef.current, { type: mimeType });
+        const videoFile = new File([videoBlob], `video_note_${Date.now()}.webm`, { type: mimeType });
+        
+        stream.getTracks().forEach(track => track.stop());
+        clearInterval(recordingTimerRef.current);
+        setRecordingTime(0);
+        setIsVideoRecording(false);
+        setShowVideoPreview(false);
+        
+        setUploading(true);
+        try {
+          await onSendFile(videoFile, 'video_note');
+        } catch (err) {
+          console.error('Upload error:', err);
+          alert('Ошибка отправки видео');
+        }
+        setUploading(false);
+      };
+
+      mediaRecorder.start();
+      setIsVideoRecording(true);
+      setRecordingTime(0);
+      
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => {
+          // Максимум 60 секунд для видео-кружочка
+          if (prev >= 59) {
+            stopVideoRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error('Camera access error:', err);
+      alert('Не удалось получить доступ к камере');
+    }
+  };
+
+  const stopVideoRecording = () => {
+    if (mediaRecorderRef.current && isVideoRecording) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelVideoRecording = () => {
+    if (mediaRecorderRef.current && isVideoRecording) {
+      videoStreamRef.current?.getTracks().forEach(track => track.stop());
+      clearInterval(recordingTimerRef.current);
+      setRecordingTime(0);
+      setIsVideoRecording(false);
+      setShowVideoPreview(false);
+      videoChunksRef.current = [];
+    }
+  };
+
   return (
     <div className="flex-1 flex bg-slate-950 relative">
       <div className="flex-1 flex flex-col">
@@ -257,6 +354,9 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
               <div className={`max-w-[85%] md:max-w-md rounded-2xl px-3 md:px-4 py-2 md:py-3 ${msg.direction === 'expert' ? 'bg-amber-500 text-black rounded-br-md' : 'bg-slate-800 text-white rounded-bl-md'}`}>
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="Фото" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
+                {msg.content_type === 'video_note' && msg.file_url && (
+                  <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" style={{ borderRadius: '50%' }} onClick={() => window.open(msg.file_url, '_blank')} />
+                )}
                 {msg.content_type === 'voice' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
                 {msg.content_type === 'audio' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
                 {msg.content_type === 'document' && msg.file_url && (
@@ -282,11 +382,40 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
               </button>
               <div className="flex-1 flex items-center gap-3">
                 <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
-                <span className="text-white font-medium">Запись... {formatRecordingTime(recordingTime)}</span>
+                <span className="text-white font-medium">🎤 Запись... {formatRecordingTime(recordingTime)}</span>
               </div>
               <button onClick={stopRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition" title="Отправить">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
               </button>
+            </div>
+          ) : isVideoRecording || showVideoPreview ? (
+            <div className="flex flex-col items-center gap-3 bg-slate-800 rounded-xl p-4">
+              <div className="relative">
+                <video 
+                  ref={videoPreviewRef} 
+                  autoPlay 
+                  muted 
+                  playsInline
+                  className="w-48 h-48 rounded-full object-cover border-4 border-amber-500"
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+                {isVideoRecording && (
+                  <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                    <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                    {formatRecordingTime(recordingTime)}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button onClick={cancelVideoRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition" title="Отменить">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+                {isVideoRecording && (
+                  <button onClick={stopVideoRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition" title="Отправить">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="flex gap-2 md:gap-3">
@@ -300,6 +429,9 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
               </button>
               <button onClick={startRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Записать аудио">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+              </button>
+              <button onClick={startVideoRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Записать видео-кружочек">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
               </button>
               <textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Введите сообщение..." rows={1}
                 className="flex-1 px-3 md:px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
