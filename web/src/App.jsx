@@ -147,7 +147,18 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // Пробуем использовать ogg формат, если браузер поддерживает
+      let mimeType = 'audio/webm;codecs=opus';
+      if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+        mimeType = 'audio/ogg;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -158,8 +169,9 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.${ext}`, { type: mimeType });
         
         stream.getTracks().forEach(track => track.stop());
         clearInterval(recordingTimerRef.current);
@@ -168,7 +180,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         
         setUploading(true);
         try {
-          await onSendFile(audioFile);
+          await onSendFile(audioFile, 'voice');
         } catch (err) {
           console.error('Upload error:', err);
           alert('Ошибка отправки аудио');
@@ -506,7 +518,7 @@ export default function App() {
     loadMessages(selectedClient.id);
   };
 
-  const handleSendFile = async (file) => {
+  const handleSendFile = async (file, forceContentType = null) => {
     if (!selectedClient) return;
     
     const timestamp = Date.now();
@@ -521,10 +533,12 @@ export default function App() {
     const { data: { publicUrl } } = supabase.storage.from('diagnostic-files').getPublicUrl(filePath);
     
     // Determine content type
-    let contentType = 'document';
-    if (file.type.startsWith('image/')) contentType = 'photo';
-    else if (file.type.startsWith('video/')) contentType = 'video';
-    else if (file.type.startsWith('audio/')) contentType = 'audio';
+    let contentType = forceContentType || 'document';
+    if (!forceContentType) {
+      if (file.type.startsWith('image/')) contentType = 'photo';
+      else if (file.type.startsWith('video/')) contentType = 'video';
+      else if (file.type.startsWith('audio/')) contentType = 'voice';
+    }
     
     // Save message
     await supabase.from('messages').insert({
