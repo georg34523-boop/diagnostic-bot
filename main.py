@@ -438,15 +438,16 @@ async def send_expert_messages():
                                     tmp_out_path = tmp_in_path.replace('.webm', '_round.mp4')
                                     
                                     try:
-                                        # Конвертируем в круглый MP4 (384x384)
+                                        # Конвертируем в круглый MP4 (384x384) с правильной ориентацией
                                         process = await asyncio.create_subprocess_exec(
                                             'ffmpeg', '-y', '-i', tmp_in_path,
-                                            '-vf', 'crop=min(iw\\,ih):min(iw\\,ih),scale=384:384',
+                                            '-vf', 'crop=min(iw\\,ih):min(iw\\,ih),scale=384:384,transpose=1',
                                             '-c:v', 'libx264',
                                             '-preset', 'fast',
                                             '-c:a', 'aac',
                                             '-b:a', '128k',
-                                            '-t', '60',  # максимум 60 секунд
+                                            '-t', '60',
+                                            '-metadata:s:v', 'rotate=0',
                                             tmp_out_path,
                                             stdout=asyncio.subprocess.PIPE,
                                             stderr=asyncio.subprocess.PIPE
@@ -462,7 +463,6 @@ async def send_expert_messages():
                                             logger.info(f"Video note sent with ffmpeg conversion")
                                         else:
                                             logger.error(f"FFmpeg video_note failed: {stderr.decode()}")
-                                            # Отправляем как обычное видео
                                             video_file = BufferedInputFile(video_data, filename="video.mp4")
                                             await bot.send_video(telegram_id, video_file)
                                     except Exception as e:
