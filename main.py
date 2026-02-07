@@ -368,20 +368,32 @@ async def send_expert_messages():
                                     tmp_out_path = tmp_in_path.replace('.webm', '.ogg')
                                     
                                     try:
-                                        # Конвертируем в ogg opus
+                                        # Конвертируем в ogg opus с правильными параметрами
                                         process = await asyncio.create_subprocess_exec(
-                                            'ffmpeg', '-i', tmp_in_path, '-c:a', 'libopus', '-b:a', '64k', tmp_out_path,
-                                            stdout=asyncio.subprocess.DEVNULL,
-                                            stderr=asyncio.subprocess.DEVNULL
+                                            'ffmpeg', '-y', '-i', tmp_in_path,
+                                            '-acodec', 'libopus',
+                                            '-ac', '1',  # моно
+                                            '-ar', '48000',  # частота дискретизации
+                                            '-b:a', '128k',  # битрейт
+                                            '-vbr', 'on',
+                                            tmp_out_path,
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE
                                         )
-                                        await process.wait()
+                                        stdout, stderr = await process.communicate()
                                         
-                                        # Читаем конвертированный файл
-                                        with open(tmp_out_path, 'rb') as f:
-                                            ogg_data = f.read()
-                                        
-                                        voice_file = BufferedInputFile(ogg_data, filename="voice.ogg")
-                                        await bot.send_voice(telegram_id, voice_file)
+                                        if process.returncode == 0 and os.path.exists(tmp_out_path):
+                                            # Читаем конвертированный файл
+                                            with open(tmp_out_path, 'rb') as f:
+                                                ogg_data = f.read()
+                                            
+                                            voice_file = BufferedInputFile(ogg_data, filename="voice.ogg")
+                                            await bot.send_voice(telegram_id, voice_file)
+                                            logger.info(f"Voice sent with ffmpeg conversion")
+                                        else:
+                                            logger.error(f"FFmpeg failed: {stderr.decode()}")
+                                            voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                            await bot.send_voice(telegram_id, voice_file)
                                     except Exception as e:
                                         logger.error(f"FFmpeg error: {e}")
                                         # Если ffmpeg не сработал, отправляем как есть
@@ -389,11 +401,10 @@ async def send_expert_messages():
                                         await bot.send_voice(telegram_id, voice_file)
                                     finally:
                                         # Удаляем временные файлы
-                                        import os as os_module
-                                        if os_module.path.exists(tmp_in_path):
-                                            os_module.remove(tmp_in_path)
-                                        if os_module.path.exists(tmp_out_path):
-                                            os_module.remove(tmp_out_path)
+                                        if os.path.exists(tmp_in_path):
+                                            os.remove(tmp_in_path)
+                                        if os.path.exists(tmp_out_path):
+                                            os.remove(tmp_out_path)
                     
                     elif msg["content_type"] == "audio" and msg.get("file_url"):
                         # Скачиваем файл и отправляем как аудио
