@@ -422,6 +422,59 @@ async def send_expert_messages():
                             caption=msg.get("text_content")
                         )
                     
+                    elif msg["content_type"] == "video_note" and msg.get("file_url"):
+                        # Скачиваем видео и конвертируем в круглый формат для video_note
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    video_data = await resp.read()
+                                    
+                                    import tempfile
+                                    
+                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
+                                        tmp_in.write(video_data)
+                                        tmp_in_path = tmp_in.name
+                                    
+                                    tmp_out_path = tmp_in_path.replace('.webm', '_round.mp4')
+                                    
+                                    try:
+                                        # Конвертируем в круглый MP4 (384x384)
+                                        process = await asyncio.create_subprocess_exec(
+                                            'ffmpeg', '-y', '-i', tmp_in_path,
+                                            '-vf', 'crop=min(iw\\,ih):min(iw\\,ih),scale=384:384',
+                                            '-c:v', 'libx264',
+                                            '-preset', 'fast',
+                                            '-c:a', 'aac',
+                                            '-b:a', '128k',
+                                            '-t', '60',  # максимум 60 секунд
+                                            tmp_out_path,
+                                            stdout=asyncio.subprocess.PIPE,
+                                            stderr=asyncio.subprocess.PIPE
+                                        )
+                                        stdout, stderr = await process.communicate()
+                                        
+                                        if process.returncode == 0 and os.path.exists(tmp_out_path):
+                                            with open(tmp_out_path, 'rb') as f:
+                                                mp4_data = f.read()
+                                            
+                                            video_note_file = BufferedInputFile(mp4_data, filename="video_note.mp4")
+                                            await bot.send_video_note(telegram_id, video_note_file)
+                                            logger.info(f"Video note sent with ffmpeg conversion")
+                                        else:
+                                            logger.error(f"FFmpeg video_note failed: {stderr.decode()}")
+                                            # Отправляем как обычное видео
+                                            video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                            await bot.send_video(telegram_id, video_file)
+                                    except Exception as e:
+                                        logger.error(f"FFmpeg video_note error: {e}")
+                                        video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                        await bot.send_video(telegram_id, video_file)
+                                    finally:
+                                        if os.path.exists(tmp_in_path):
+                                            os.remove(tmp_in_path)
+                                        if os.path.exists(tmp_out_path):
+                                            os.remove(tmp_out_path)
+                    
                     # Помечаем как прочитанное
                     supabase.table("messages").update(
                         {"is_read": True}
