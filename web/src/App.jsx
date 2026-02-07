@@ -502,7 +502,7 @@ export default function App() {
 
   const handleSendMessage = async (text) => {
     if (!selectedClient) return;
-    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: 'text', text_content: text, is_read: true });
+    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: 'text', text_content: text, is_read: false });
     loadMessages(selectedClient.id);
   };
 
@@ -533,7 +533,7 @@ export default function App() {
       content_type: contentType,
       file_url: publicUrl,
       file_name: file.name,
-      is_read: true
+      is_read: false
     });
     
     loadMessages(selectedClient.id);
