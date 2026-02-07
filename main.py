@@ -1,159 +1,107 @@
-"""
-Telegram бот для диагностики
-Принимает сообщения от клиентов и пересылает в веб-панель
-"""
-
+import os
 import asyncio
 import logging
-import os
 from datetime import datetime
-from typing import Optional
+from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import ContentType
-from dotenv import load_dotenv
+from aiogram.filters import CommandStart, Command
+from aiogram.types import Message
 from supabase import create_client, Client
 
-# Загружаем переменные окружения
 load_dotenv()
 
 # Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-bot = Bot(token=os.getenv('BOT_TOKEN'))
+# Инициализация бота
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing environment variables")
+
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Инициализация Supabase
-supabase: Client = create_client(
-    os.getenv('SUPABASE_URL'),
-    os.getenv('SUPABASE_KEY')
-)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-# =============================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# =============================================
-
-async def is_user_authorized(telegram_id: int, username: Optional[str] = None) -> bool:
-    """Проверяем, авторизован ли пользователь (оплатил)"""
-    try:
-        # Проверяем по telegram_id
-        result = supabase.table('authorized_users').select('*').eq('telegram_id', telegram_id).execute()
-        if result.data:
-            return True
-        
-        # Проверяем по username если есть
-        if username:
-            result = supabase.table('authorized_users').select('*').eq('telegram_username', username.lower()).execute()
-            if result.data:
-                # Обновляем telegram_id для будущих проверок
-                supabase.table('authorized_users').update({
-                    'telegram_id': telegram_id
-                }).eq('telegram_username', username.lower()).execute()
-                return True
-        
+async def is_authorized(username: str) -> bool:
+    """Проверка авторизации пользователя"""
+    if not username:
         return False
-    except Exception as e:
-        logger.error(f"Ошибка проверки авторизации: {e}")
-        return False
+    result = supabase.table("authorized_users").select("id").eq(
+        "telegram_username", username.lower()
+    ).execute()
+    return len(result.data) > 0
 
 
-async def get_or_create_client(telegram_id: int, user: types.User) -> Optional[dict]:
-    """Получаем или создаём клиента в базе"""
-    try:
-        # Проверяем существует ли клиент
-        result = supabase.table('clients').select('*').eq('telegram_id', telegram_id).execute()
-        
-        if result.data:
-            return result.data[0]
-        
-        # Создаём нового клиента
-        new_client = {
-            'telegram_id': telegram_id,
-            'telegram_username': user.username,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'status': 'new'
-        }
-        
-        result = supabase.table('clients').insert(new_client).execute()
-        logger.info(f"Создан новый клиент: {telegram_id}")
-        return result.data[0] if result.data else None
-        
-    except Exception as e:
-        logger.error(f"Ошибка создания клиента: {e}")
-        return None
+async def get_or_create_client(user: types.User) -> dict:
+    """Получить или создать клиента"""
+    result = supabase.table("clients").select("*").eq(
+        "telegram_id", user.id
+    ).execute()
+    
+    if result.data:
+        return result.data[0]
+    
+    new_client = {
+        "telegram_id": user.id,
+        "telegram_username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "status": "new"
+    }
+    result = supabase.table("clients").insert(new_client).execute()
+    return result.data[0]
 
 
 async def save_message(client_id: str, direction: str, content_type: str, 
-                       text_content: Optional[str] = None, 
-                       file_url: Optional[str] = None,
-                       file_name: Optional[str] = None,
-                       telegram_file_id: Optional[str] = None) -> Optional[dict]:
-    """Сохраняем сообщение в базу"""
-    try:
-        message_data = {
-            'client_id': client_id,
-            'direction': direction,
-            'content_type': content_type,
-            'text_content': text_content,
-            'file_url': file_url,
-            'file_name': file_name,
-            'telegram_file_id': telegram_file_id,
-            'is_read': False
-        }
-        
-        result = supabase.table('messages').insert(message_data).execute()
-        return result.data[0] if result.data else None
-        
-    except Exception as e:
-        logger.error(f"Ошибка сохранения сообщения: {e}")
-        return None
-
-
-async def upload_file_to_storage(file: types.File, bot: Bot, file_name: str) -> Optional[str]:
-    """Загружаем файл в Supabase Storage"""
-    try:
-        # Скачиваем файл
-        file_bytes = await bot.download_file(file.file_path)
-        file_content = file_bytes.read()
-        
-        # Генерируем уникальное имя
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        storage_path = f"uploads/{timestamp}_{file_name}"
-        
-        # Загружаем в Supabase Storage
-        result = supabase.storage.from_('diagnostic-files').upload(
-            storage_path,
-            file_content
-        )
-        
-        # Получаем публичный URL
-        public_url = supabase.storage.from_('diagnostic-files').get_public_url(storage_path)
-        return public_url
-        
-    except Exception as e:
-        logger.error(f"Ошибка загрузки файла: {e}")
-        return None
-
-
-# =============================================
-# ОБРАБОТЧИКИ КОМАНД
-# =============================================
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Обработка команды /start"""
-    user = message.from_user
+                       text_content: str = None, file_url: str = None,
+                       file_name: str = None, telegram_file_id: str = None):
+    """Сохранить сообщение в базу"""
+    message_data = {
+        "client_id": client_id,
+        "direction": direction,
+        "content_type": content_type,
+        "text_content": text_content,
+        "file_url": file_url,
+        "file_name": file_name,
+        "telegram_file_id": telegram_file_id,
+        "is_read": direction == "expert"
+    }
+    supabase.table("messages").insert(message_data).execute()
     
-    # Проверяем авторизацию
-    if not await is_user_authorized(user.id, user.username):
+    # Обновляем время последнего сообщения клиента
+    supabase.table("clients").update(
+        {"updated_at": datetime.utcnow().isoformat()}
+    ).eq("id", client_id).execute()
+
+
+async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
+    """Загрузить файл в Supabase Storage"""
+    try:
+        file_path = f"uploads/{file_name}"
+        supabase.storage.from_("diagnostic-files").upload(
+            file_path, file_bytes, {"content-type": "application/octet-stream"}
+        )
+        public_url = supabase.storage.from_("diagnostic-files").get_public_url(file_path)
+        return public_url
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        return None
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    """Обработка команды /start"""
+    username = message.from_user.username
+    
+    if not await is_authorized(username):
         await message.answer(
             "👋 Добро пожаловать!\n\n"
             "К сожалению, у вас пока нет доступа к диагностике.\n\n"
@@ -161,247 +109,286 @@ async def cmd_start(message: types.Message):
         )
         return
     
-    # Создаём или получаем клиента
-    client = await get_or_create_client(user.id, user)
+    await get_or_create_client(message.from_user)
     
-    if client:
-        await message.answer(
-            "👋 Добро пожаловать в бот диагностики!\n\n"
-            "Здесь вы можете:\n"
-            "📸 Отправить фото для диагностики\n"
-            "💬 Задать вопросы эксперту\n"
-            "📄 Получить рекомендации\n\n"
-            "Просто напишите сообщение или отправьте фото, и эксперт вам ответит!"
-        )
-    else:
-        await message.answer(
-            "Произошла ошибка. Пожалуйста, попробуйте позже или напишите в поддержку."
-        )
+    await message.answer(
+        "👋 Добро пожаловать в бот диагностики!\n\n"
+        "Здесь вы можете:\n"
+        "📸 Отправить фото для диагностики\n"
+        "💬 Задать вопросы эксперту\n"
+        "📄 Получить рекомендации\n\n"
+        "Просто напишите сообщение или отправьте фото, и эксперт вам ответит!"
+    )
 
 
 @dp.message(Command("help"))
-async def cmd_help(message: types.Message):
+async def cmd_help(message: Message):
     """Обработка команды /help"""
     await message.answer(
-        "📋 Как пользоваться ботом:\n\n"
-        "1. Отправьте фото лица для диагностики\n"
-        "2. Эксперт проанализирует и ответит\n"
-        "3. Получите рекомендации\n"
-        "4. Запишитесь на звонок для детального разбора\n\n"
-        "Вы можете отправлять:\n"
-        "📸 Фото\n"
-        "🎥 Видео\n"
-        "🎤 Голосовые сообщения\n"
-        "📄 Документы\n"
-        "💬 Текстовые сообщения"
+        "📖 Как пользоваться ботом:\n\n"
+        "1. Отправьте фото для диагностики\n"
+        "2. Задайте вопрос текстом\n"
+        "3. Дождитесь ответа эксперта\n\n"
+        "Эксперт ответит вам в ближайшее время!"
     )
 
 
-# =============================================
-# ОБРАБОТЧИКИ СООБЩЕНИЙ
-# =============================================
-
-@dp.message(F.content_type == ContentType.TEXT)
-async def handle_text(message: types.Message):
-    """Обработка текстовых сообщений"""
-    user = message.from_user
-    
-    # Проверяем авторизацию
-    if not await is_user_authorized(user.id, user.username):
-        await message.answer(
-            "⚠️ У вас нет доступа к боту.\n"
-            "Если вы уже оплатили — напишите в поддержку."
-        )
-        return
-    
-    # Получаем или создаём клиента
-    client = await get_or_create_client(user.id, user)
-    if not client:
-        await message.answer("Произошла ошибка. Попробуйте позже.")
-        return
-    
-    # Сохраняем сообщение
-    await save_message(
-        client_id=client['id'],
-        direction='client',
-        content_type='text',
-        text_content=message.text
-    )
-    
-    await message.answer(
-        "✅ Сообщение получено!\n"
-        "Эксперт ответит вам в ближайшее время."
-    )
-
-
-@dp.message(F.content_type == ContentType.PHOTO)
-async def handle_photo(message: types.Message):
+@dp.message(F.photo)
+async def handle_photo(message: Message):
     """Обработка фото"""
-    user = message.from_user
+    username = message.from_user.username
     
-    if not await is_user_authorized(user.id, user.username):
-        await message.answer("⚠️ У вас нет доступа к боту.")
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
         return
     
-    client = await get_or_create_client(user.id, user)
-    if not client:
-        await message.answer("Произошла ошибка. Попробуйте позже.")
-        return
+    client = await get_or_create_client(message.from_user)
     
-    # Берём фото максимального размера
-    photo = message.photo[-1]
+    # Получаем файл
+    photo = message.photo[-1]  # Берём самое большое фото
     file = await bot.get_file(photo.file_id)
+    file_bytes = await bot.download_file(file.file_path)
     
-    # Загружаем в storage
-    file_url = await upload_file_to_storage(file, bot, f"photo_{photo.file_id}.jpg")
+    # Загружаем в Storage
+    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
     
     # Сохраняем сообщение
     await save_message(
-        client_id=client['id'],
-        direction='client',
-        content_type='photo',
+        client_id=client["id"],
+        direction="client",
+        content_type="photo",
         text_content=message.caption,
         file_url=file_url,
+        file_name=file_name,
         telegram_file_id=photo.file_id
     )
     
-    await message.answer(
-        "📸 Фото получено!\n"
-        "Эксперт проанализирует и ответит вам."
-    )
+    await message.answer("📸 Фото получено! Эксперт скоро его посмотрит и ответит вам.")
 
 
-@dp.message(F.content_type == ContentType.VIDEO)
-async def handle_video(message: types.Message):
+@dp.message(F.video)
+async def handle_video(message: Message):
     """Обработка видео"""
-    user = message.from_user
+    username = message.from_user.username
     
-    if not await is_user_authorized(user.id, user.username):
-        await message.answer("⚠️ У вас нет доступа к боту.")
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
         return
     
-    client = await get_or_create_client(user.id, user)
-    if not client:
-        await message.answer("Произошла ошибка. Попробуйте позже.")
-        return
+    client = await get_or_create_client(message.from_user)
     
     video = message.video
     file = await bot.get_file(video.file_id)
+    file_bytes = await bot.download_file(file.file_path)
     
-    file_url = await upload_file_to_storage(file, bot, f"video_{video.file_id}.mp4")
+    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
     
     await save_message(
-        client_id=client['id'],
-        direction='client',
-        content_type='video',
+        client_id=client["id"],
+        direction="client",
+        content_type="video",
         text_content=message.caption,
         file_url=file_url,
+        file_name=file_name,
         telegram_file_id=video.file_id
     )
     
-    await message.answer("🎥 Видео получено! Эксперт скоро ответит.")
+    await message.answer("🎬 Видео получено! Эксперт скоро посмотрит и ответит вам.")
 
 
-@dp.message(F.content_type == ContentType.VOICE)
-async def handle_voice(message: types.Message):
-    """Обработка голосовых сообщений"""
-    user = message.from_user
+@dp.message(F.voice)
+async def handle_voice(message: Message):
+    """Обработка голосового сообщения"""
+    username = message.from_user.username
     
-    if not await is_user_authorized(user.id, user.username):
-        await message.answer("⚠️ У вас нет доступа к боту.")
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
         return
     
-    client = await get_or_create_client(user.id, user)
-    if not client:
-        await message.answer("Произошла ошибка. Попробуйте позже.")
-        return
+    client = await get_or_create_client(message.from_user)
     
     voice = message.voice
     file = await bot.get_file(voice.file_id)
+    file_bytes = await bot.download_file(file.file_path)
     
-    file_url = await upload_file_to_storage(file, bot, f"voice_{voice.file_id}.ogg")
+    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
+    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
     
     await save_message(
-        client_id=client['id'],
-        direction='client',
-        content_type='voice',
+        client_id=client["id"],
+        direction="client",
+        content_type="voice",
         file_url=file_url,
+        file_name=file_name,
         telegram_file_id=voice.file_id
     )
     
-    await message.answer("🎤 Голосовое сообщение получено!")
+    await message.answer("🎤 Голосовое сообщение получено! Эксперт скоро прослушает и ответит.")
 
 
-@dp.message(F.content_type == ContentType.DOCUMENT)
-async def handle_document(message: types.Message):
-    """Обработка документов"""
-    user = message.from_user
+@dp.message(F.video_note)
+async def handle_video_note(message: Message):
+    """Обработка видео-кружочка"""
+    username = message.from_user.username
     
-    if not await is_user_authorized(user.id, user.username):
-        await message.answer("⚠️ У вас нет доступа к боту.")
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
         return
     
-    client = await get_or_create_client(user.id, user)
-    if not client:
-        await message.answer("Произошла ошибка. Попробуйте позже.")
+    client = await get_or_create_client(message.from_user)
+    
+    video_note = message.video_note
+    file = await bot.get_file(video_note.file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    
+    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
+    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+    
+    await save_message(
+        client_id=client["id"],
+        direction="client",
+        content_type="video_note",
+        file_url=file_url,
+        file_name=file_name,
+        telegram_file_id=video_note.file_id
+    )
+    
+    await message.answer("⭕ Видео-кружок получен! Эксперт скоро посмотрит и ответит.")
+
+
+@dp.message(F.document)
+async def handle_document(message: Message):
+    """Обработка документа"""
+    username = message.from_user.username
+    
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
         return
+    
+    client = await get_or_create_client(message.from_user)
     
     document = message.document
     file = await bot.get_file(document.file_id)
+    file_bytes = await bot.download_file(file.file_path)
     
-    file_url = await upload_file_to_storage(file, bot, document.file_name or f"doc_{document.file_id}")
+    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
+    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
     
     await save_message(
-        client_id=client['id'],
-        direction='client',
-        content_type='document',
+        client_id=client["id"],
+        direction="client",
+        content_type="document",
         text_content=message.caption,
         file_url=file_url,
         file_name=document.file_name,
         telegram_file_id=document.file_id
     )
     
-    await message.answer("📄 Документ получен!")
+    await message.answer("📄 Документ получен! Эксперт скоро посмотрит и ответит.")
 
 
-# =============================================
-# ФУНКЦИЯ ДЛЯ ОТПРАВКИ СООБЩЕНИЙ ИЗ ВЕБ-ПАНЕЛИ
-# =============================================
-
-async def send_message_to_client(telegram_id: int, text: str = None, 
-                                  photo_url: str = None, 
-                                  document_url: str = None) -> bool:
-    """
-    Отправка сообщения клиенту из веб-панели
-    Вызывается через API
-    """
-    try:
-        if text:
-            await bot.send_message(telegram_id, text)
-        if photo_url:
-            await bot.send_photo(telegram_id, photo_url)
-        if document_url:
-            await bot.send_document(telegram_id, document_url)
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка отправки сообщения клиенту {telegram_id}: {e}")
-        return False
+@dp.message(F.text)
+async def handle_text(message: Message):
+    """Обработка текстового сообщения"""
+    username = message.from_user.username
+    
+    if not await is_authorized(username):
+        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+        return
+    
+    client = await get_or_create_client(message.from_user)
+    
+    await save_message(
+        client_id=client["id"],
+        direction="client",
+        content_type="text",
+        text_content=message.text
+    )
+    
+    await message.answer("✉️ Сообщение получено! Эксперт скоро ответит вам.")
 
 
-# =============================================
-# ЗАПУСК БОТА
-# =============================================
+async def send_expert_messages():
+    """Отправка сообщений от эксперта клиентам"""
+    processed_ids = set()
+    
+    while True:
+        try:
+            # Получаем непрочитанные сообщения от эксперта
+            result = supabase.table("messages").select(
+                "*, clients(telegram_id)"
+            ).eq("direction", "expert").eq("is_read", False).execute()
+            
+            for msg in result.data:
+                if msg["id"] in processed_ids:
+                    continue
+                
+                telegram_id = msg.get("clients", {}).get("telegram_id")
+                if not telegram_id:
+                    continue
+                
+                try:
+                    # Отправляем сообщение в зависимости от типа
+                    if msg["content_type"] == "text" and msg.get("text_content"):
+                        await bot.send_message(telegram_id, msg["text_content"])
+                    
+                    elif msg["content_type"] == "photo" and msg.get("file_url"):
+                        await bot.send_photo(
+                            telegram_id, 
+                            msg["file_url"],
+                            caption=msg.get("text_content")
+                        )
+                    
+                    elif msg["content_type"] == "video" and msg.get("file_url"):
+                        await bot.send_video(
+                            telegram_id,
+                            msg["file_url"],
+                            caption=msg.get("text_content")
+                        )
+                    
+                    elif msg["content_type"] == "voice" and msg.get("file_url"):
+                        await bot.send_voice(telegram_id, msg["file_url"])
+                    
+                    elif msg["content_type"] == "audio" and msg.get("file_url"):
+                        await bot.send_audio(telegram_id, msg["file_url"])
+                    
+                    elif msg["content_type"] == "document" and msg.get("file_url"):
+                        await bot.send_document(
+                            telegram_id,
+                            msg["file_url"],
+                            caption=msg.get("text_content")
+                        )
+                    
+                    # Помечаем как прочитанное
+                    supabase.table("messages").update(
+                        {"is_read": True}
+                    ).eq("id", msg["id"]).execute()
+                    
+                    processed_ids.add(msg["id"])
+                    logger.info(f"Sent message {msg['id']} to {telegram_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error sending message {msg['id']}: {e}")
+                    processed_ids.add(msg["id"])
+            
+        except Exception as e:
+            logger.error(f"Error in send_expert_messages: {e}")
+        
+        await asyncio.sleep(2)  # Проверяем каждые 2 секунды
+
 
 async def main():
-    """Главная функция запуска бота"""
-    logger.info("Запуск бота...")
+    """Главная функция"""
+    logger.info("Starting bot...")
     
-    # Удаляем webhook если был
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Запускаем отправку сообщений от эксперта в фоне
+    asyncio.create_task(send_expert_messages())
     
-    # Запускаем polling
+    # Запускаем бота
     await dp.start_polling(bot)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
