@@ -351,13 +351,49 @@ async def send_expert_messages():
                         )
                     
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
-                        # Скачиваем файл и отправляем как голосовое
+                        # Скачиваем файл и конвертируем в ogg opus для правильного waveform
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     audio_data = await resp.read()
-                                    voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
-                                    await bot.send_voice(telegram_id, voice_file)
+                                    
+                                    # Сохраняем временный файл
+                                    import tempfile
+                                    import subprocess
+                                    
+                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
+                                        tmp_in.write(audio_data)
+                                        tmp_in_path = tmp_in.name
+                                    
+                                    tmp_out_path = tmp_in_path.replace('.webm', '.ogg')
+                                    
+                                    try:
+                                        # Конвертируем в ogg opus
+                                        process = await asyncio.create_subprocess_exec(
+                                            'ffmpeg', '-i', tmp_in_path, '-c:a', 'libopus', '-b:a', '64k', tmp_out_path,
+                                            stdout=asyncio.subprocess.DEVNULL,
+                                            stderr=asyncio.subprocess.DEVNULL
+                                        )
+                                        await process.wait()
+                                        
+                                        # Читаем конвертированный файл
+                                        with open(tmp_out_path, 'rb') as f:
+                                            ogg_data = f.read()
+                                        
+                                        voice_file = BufferedInputFile(ogg_data, filename="voice.ogg")
+                                        await bot.send_voice(telegram_id, voice_file)
+                                    except Exception as e:
+                                        logger.error(f"FFmpeg error: {e}")
+                                        # Если ffmpeg не сработал, отправляем как есть
+                                        voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                        await bot.send_voice(telegram_id, voice_file)
+                                    finally:
+                                        # Удаляем временные файлы
+                                        import os as os_module
+                                        if os_module.path.exists(tmp_in_path):
+                                            os_module.remove(tmp_in_path)
+                                        if os_module.path.exists(tmp_out_path):
+                                            os_module.remove(tmp_out_path)
                     
                     elif msg["content_type"] == "audio" and msg.get("file_url"):
                         # Скачиваем файл и отправляем как аудио
