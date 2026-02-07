@@ -35,7 +35,7 @@ const formatFullDate = (dateStr) => {
   });
 };
 
-const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onClose }) => {
+const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onClose, lastMessages }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const filteredClients = clients
@@ -47,6 +47,15 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
     })
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
+  const filterLabels = {
+    all: 'Все',
+    new: 'Новые',
+    diagnostic_scheduled: 'Запл. диагн.',
+    diagnostic_done: 'Пров. диагн.',
+    call_scheduled: 'Запл. звонок',
+    call_done: 'Пров. звонок'
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-900 border-r border-slate-700">
       <div className="p-4 border-b border-slate-700">
@@ -55,13 +64,13 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
       </div>
       <div className="p-3 border-b border-slate-700 flex flex-wrap gap-2">
         <button onClick={() => setFilter('all')} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === 'all' ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-          Все ({clients.length})
+          {filterLabels.all} ({clients.length})
         </button>
         {Object.entries(STATUSES).map(([key, { label }]) => {
           const count = clients.filter(c => c.status === key).length;
           return (
             <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === key ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-              {label.split(' ')[0]} ({count})
+              {filterLabels[key]} ({count})
             </button>
           );
         })}
@@ -70,6 +79,14 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
         {filteredClients.map((client) => {
           const unread = unreadCounts[client.id] || 0;
           const isSelected = selectedClient?.id === client.id;
+          const lastMsg = lastMessages?.[client.id];
+          const lastMsgText = lastMsg?.content_type === 'text' ? lastMsg.text_content : 
+                            lastMsg?.content_type === 'photo' ? '📷 Фото' :
+                            lastMsg?.content_type === 'video' ? '🎬 Видео' :
+                            lastMsg?.content_type === 'voice' ? '🎤 Голосовое' :
+                            lastMsg?.content_type === 'video_note' ? '⭕ Видео-кружок' :
+                            lastMsg?.content_type === 'document' ? '📄 Документ' : '';
+          
           return (
             <div key={client.id} onClick={() => { onSelectClient(client); if (onClose) onClose(); }}
               className={`p-4 border-b border-slate-700/50 cursor-pointer transition ${isSelected ? 'bg-slate-800' : 'hover:bg-slate-800/50'}`}>
@@ -80,7 +97,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
                   </div>
                   <div>
                     <div className="font-medium text-white">{client.first_name} {client.last_name}</div>
-                    <div className="text-sm text-slate-400">@{client.telegram_username || 'no username'}</div>
+                    <div className="text-sm text-slate-400 truncate max-w-[180px]">{lastMsgText || 'Нет сообщений'}</div>
                   </div>
                 </div>
                 {unread > 0 && <span className="bg-amber-500 text-black text-xs font-bold px-2 py-1 rounded-full">{unread}</span>}
@@ -583,6 +600,7 @@ export default function App() {
   const [selectedClient, setSelectedClient] = useState(null);
   const [messages, setMessages] = useState([]);
   const [unreadCounts, setUnreadCounts] = useState({});
+  const [lastMessages, setLastMessages] = useState({});
   const [analytics, setAnalytics] = useState(null);
   const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const [reminders, setReminders] = useState([]);
@@ -607,8 +625,19 @@ export default function App() {
 
   const loadClients = async () => {
     const { data } = await supabase.from('clients').select('*').order('updated_at', { ascending: false });
-    if (data) { setClients(data); computeAnalytics(data); }
+    if (data) { setClients(data); computeAnalytics(data); loadLastMessages(data); }
     loadUnreadCounts();
+  };
+
+  const loadLastMessages = async (clientsList) => {
+    const msgs = {};
+    for (const client of clientsList) {
+      const { data } = await supabase.from('messages').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).limit(1);
+      if (data && data[0]) {
+        msgs[client.id] = data[0];
+      }
+    }
+    setLastMessages(msgs);
   };
 
   const loadUnreadCounts = async () => {
@@ -744,6 +773,7 @@ export default function App() {
                 selectedClient={selectedClient} 
                 onSelectClient={handleSelectClient} 
                 unreadCounts={unreadCounts}
+                lastMessages={lastMessages}
                 onClose={() => setShowClientList(false)}
               />
             </div>
