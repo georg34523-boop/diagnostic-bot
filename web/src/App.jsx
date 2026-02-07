@@ -107,8 +107,13 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [reminderDate, setReminderDate] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
 
   useEffect(() => { setNotes(client?.notes || ''); }, [client?.id]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
@@ -137,6 +142,73 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     }
     setUploading(false);
     e.target.value = '';
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+        
+        stream.getTracks().forEach(track => track.stop());
+        clearInterval(recordingTimerRef.current);
+        setRecordingTime(0);
+        setIsRecording(false);
+        
+        setUploading(true);
+        try {
+          await onSendFile(audioFile);
+        } catch (err) {
+          console.error('Upload error:', err);
+          alert('Ошибка отправки аудио');
+        }
+        setUploading(false);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Microphone access error:', err);
+      alert('Не удалось получить доступ к микрофону');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      clearInterval(recordingTimerRef.current);
+      setRecordingTime(0);
+      setIsRecording(false);
+      audioChunksRef.current = [];
+    }
+  };
+
+  const formatRecordingTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -191,22 +263,40 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         
         {/* Input */}
         <div className="p-3 md:p-4 bg-slate-900 border-t border-slate-700">
-          <div className="flex gap-2 md:gap-3">
-            <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
-            <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Прикрепить файл">
-              {uploading ? (
-                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              ) : (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
-              )}
-            </button>
-            <textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Введите сообщение..." rows={1}
-              className="flex-1 px-3 md:px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
-            <button onClick={handleSend} disabled={!newMessage.trim()} className="px-4 md:px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-black font-medium rounded-xl transition flex-shrink-0">
-              <span className="hidden md:inline">Отправить</span>
-              <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-            </button>
-          </div>
+          {isRecording ? (
+            <div className="flex items-center gap-3 bg-slate-800 rounded-xl p-3">
+              <button onClick={cancelRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition" title="Отменить">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+              <div className="flex-1 flex items-center gap-3">
+                <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+                <span className="text-white font-medium">Запись... {formatRecordingTime(recordingTime)}</span>
+              </div>
+              <button onClick={stopRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition" title="Отправить">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2 md:gap-3">
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Прикрепить файл">
+                {uploading ? (
+                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                )}
+              </button>
+              <button onClick={startRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Записать аудио">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+              </button>
+              <textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Введите сообщение..." rows={1}
+                className="flex-1 px-3 md:px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
+              <button onClick={handleSend} disabled={!newMessage.trim()} className="px-4 md:px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-black font-medium rounded-xl transition flex-shrink-0">
+                <span className="hidden md:inline">Отправить</span>
+                <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+              </button>
+            </div>
+          )}
         </div>
       </div>
       
