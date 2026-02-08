@@ -506,14 +506,35 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   );
 };
 
-const Analytics = ({ analytics }) => {
+const Analytics = ({ analytics, clients, unreadDialogs, onPeriodChange, period }) => {
+  const periods = [
+    { value: 'all', label: 'Всё время' },
+    { value: 'today', label: 'Сегодня' },
+    { value: 'week', label: 'Неделя' },
+    { value: 'month', label: 'Месяц' },
+    { value: '3months', label: '3 месяца' }
+  ];
+
   if (!analytics) return null;
   return (
     <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
-      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Аналитика</h2>
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 gap-4">
+        <h2 className="text-xl md:text-2xl font-bold text-white">Аналитика</h2>
+        <div className="flex gap-2 flex-wrap">
+          {periods.map(p => (
+            <button 
+              key={p.value} 
+              onClick={() => onPeriodChange(p.value)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-white">{analytics.total_clients}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Всего клиентов</div></div>
-        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-amber-500">{analytics.unread_messages}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Непрочитанных</div></div>
+        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-amber-500">{unreadDialogs}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Ждут ответа</div></div>
         <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-green-500">{analytics.conversion_rates?.to_diagnostic || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В диагностику</div></div>
         <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-purple-500">{analytics.conversion_rates?.to_call || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В звонок</div></div>
       </div>
@@ -572,15 +593,25 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
   );
 };
 
-const Reminders = ({ reminders, onComplete }) => {
+const Reminders = ({ reminders, onComplete, onGoToChat }) => {
   const now = new Date();
   const overdue = reminders.filter(r => new Date(r.remind_at) < now && !r.is_completed);
   const today = reminders.filter(r => { const d = new Date(r.remind_at); return d >= now && d.toDateString() === now.toDateString() && !r.is_completed; });
   const future = reminders.filter(r => { const d = new Date(r.remind_at); return d > now && d.toDateString() !== now.toDateString() && !r.is_completed; });
   const ReminderItem = ({ reminder }) => (
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-slate-800 rounded-lg">
-      <div><div className="text-white">{reminder.reminder_text}</div><div className="text-sm text-slate-400 mt-1">{reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}</div></div>
-      <button onClick={() => onComplete(reminder.id)} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm self-start md:self-auto">Выполнено</button>
+      <div className="flex-1">
+        <div className="text-white">{reminder.reminder_text}</div>
+        <div className="text-sm text-slate-400 mt-1">{reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}</div>
+      </div>
+      <div className="flex gap-2 self-start md:self-auto">
+        <button onClick={() => onGoToChat(reminder.client_id)} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-lg text-sm font-medium">
+          Перейти в чат
+        </button>
+        <button onClick={() => onComplete(reminder.id)} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm">
+          ✓
+        </button>
+      </div>
     </div>
   );
   return (
@@ -606,6 +637,8 @@ export default function App() {
   const [reminders, setReminders] = useState([]);
   const [showClientList, setShowClientList] = useState(true);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
+  const [unreadDialogs, setUnreadDialogs] = useState(0);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -615,12 +648,43 @@ export default function App() {
 
   useEffect(() => {
     loadClients(); loadAuthorizedUsers(); loadReminders();
-    const clientsSub = supabase.channel('clients').on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => loadClients()).subscribe();
-    const msgSub = supabase.channel('messages').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-      if (selectedClient && payload.new.client_id === selectedClient.id) setMessages(prev => [...prev, payload.new]);
-      loadUnreadCounts();
-    }).subscribe();
-    return () => { supabase.removeChannel(clientsSub); supabase.removeChannel(msgSub); };
+    
+    // Подписка на новых клиентов
+    const clientsSub = supabase.channel('clients-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
+        loadClients();
+      })
+      .subscribe();
+    
+    // Подписка на новые сообщения
+    const msgSub = supabase.channel('messages-changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        // Обновляем сообщения в текущем чате
+        if (selectedClient && payload.new.client_id === selectedClient.id) {
+          setMessages(prev => [...prev, payload.new]);
+        }
+        // Обновляем последние сообщения и счётчики
+        setLastMessages(prev => ({
+          ...prev,
+          [payload.new.client_id]: payload.new
+        }));
+        loadUnreadCounts();
+        // Пересортируем клиентов
+        setClients(prev => {
+          const updated = prev.map(c => 
+            c.id === payload.new.client_id 
+              ? { ...c, updated_at: new Date().toISOString() }
+              : c
+          );
+          return updated.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+        });
+      })
+      .subscribe();
+    
+    return () => { 
+      supabase.removeChannel(clientsSub); 
+      supabase.removeChannel(msgSub); 
+    };
   }, [selectedClient]);
 
   const loadClients = async () => {
@@ -642,7 +706,13 @@ export default function App() {
 
   const loadUnreadCounts = async () => {
     const { data } = await supabase.from('messages').select('client_id').eq('direction', 'client').eq('is_read', false);
-    if (data) { const counts = {}; data.forEach(m => { counts[m.client_id] = (counts[m.client_id] || 0) + 1; }); setUnreadCounts(counts); }
+    if (data) { 
+      const counts = {}; 
+      data.forEach(m => { counts[m.client_id] = (counts[m.client_id] || 0) + 1; }); 
+      setUnreadCounts(counts);
+      // Считаем количество диалогов с непрочитанными (ждут ответа)
+      setUnreadDialogs(Object.keys(counts).length);
+    }
   };
 
   const loadMessages = async (clientId) => {
@@ -653,14 +723,7 @@ export default function App() {
   };
 
   const computeAnalytics = (clientsData) => {
-    const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
-    clientsData.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
-    const total = clientsData.length;
-    setAnalytics({
-      total_clients: total, status_counts: statusCounts,
-      unread_messages: Object.values(unreadCounts).reduce((a, b) => a + b, 0),
-      conversion_rates: { to_diagnostic: total > 0 ? Math.round((statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done) / total * 100) : 0, to_call: total > 0 ? Math.round(statusCounts.call_done / total * 100) : 0 }
-    });
+    computeAnalyticsWithPeriod(clientsData, analyticsPeriod);
   };
 
   const loadAuthorizedUsers = async () => { const { data } = await supabase.from('authorized_users').select('*').order('created_at', { ascending: false }); if (data) setAuthorizedUsers(data); };
@@ -736,6 +799,62 @@ export default function App() {
   const handleAddAuthorizedUser = async (userData) => { await supabase.from('authorized_users').insert({ ...userData, telegram_username: userData.telegram_username?.toLowerCase().replace('@', '') }); loadAuthorizedUsers(); };
   const handleRemoveAuthorizedUser = async (id) => { await supabase.from('authorized_users').delete().eq('id', id); loadAuthorizedUsers(); };
 
+  const handleGoToChat = (clientId) => {
+    const client = clients.find(c => c.id === clientId);
+    if (client) {
+      setSelectedClient(client);
+      loadMessages(client.id);
+      setActiveTab('chat');
+      if (isMobile) setShowClientList(false);
+    }
+  };
+
+  const handlePeriodChange = (period) => {
+    setAnalyticsPeriod(period);
+    // Пересчитываем аналитику с учётом периода
+    computeAnalyticsWithPeriod(clients, period);
+  };
+
+  const computeAnalyticsWithPeriod = (clientsData, period) => {
+    let filteredClients = clientsData;
+    const now = new Date();
+    
+    if (period !== 'all') {
+      let startDate;
+      switch (period) {
+        case 'today':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          break;
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '3months':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = null;
+      }
+      if (startDate) {
+        filteredClients = clientsData.filter(c => new Date(c.created_at) >= startDate);
+      }
+    }
+    
+    const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+    filteredClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
+    const total = filteredClients.length;
+    setAnalytics({
+      total_clients: total, 
+      status_counts: statusCounts,
+      conversion_rates: { 
+        to_diagnostic: total > 0 ? Math.round((statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done) / total * 100) : 0, 
+        to_call: total > 0 ? Math.round(statusCounts.call_done / total * 100) : 0 
+      }
+    });
+  };
+
   const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
 
   return (
@@ -793,9 +912,9 @@ export default function App() {
             </div>
           </>
         )}
-        {activeTab === 'analytics' && <Analytics analytics={analytics} />}
+        {activeTab === 'analytics' && <Analytics analytics={analytics} clients={clients} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
         {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
-        {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} />}
+        {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
       </div>
     </div>
   );
