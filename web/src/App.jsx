@@ -594,15 +594,28 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
 };
 
 const Reminders = ({ reminders, onComplete, onGoToChat }) => {
+  const [tab, setTab] = useState('now');
   const now = new Date();
-  const overdue = reminders.filter(r => new Date(r.remind_at) < now && !r.is_completed);
-  const today = reminders.filter(r => { const d = new Date(r.remind_at); return d >= now && d.toDateString() === now.toDateString() && !r.is_completed; });
-  const future = reminders.filter(r => { const d = new Date(r.remind_at); return d > now && d.toDateString() !== now.toDateString() && !r.is_completed; });
-  const ReminderItem = ({ reminder }) => (
-    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-slate-800 rounded-lg">
+  
+  // "Сейчас" - просроченные и сегодняшние которые уже наступили
+  const activeNow = reminders.filter(r => {
+    const remindTime = new Date(r.remind_at);
+    return remindTime <= now && !r.is_completed;
+  });
+  
+  // "Запланировано" - будущие
+  const scheduled = reminders.filter(r => {
+    const remindTime = new Date(r.remind_at);
+    return remindTime > now && !r.is_completed;
+  });
+  
+  const ReminderItem = ({ reminder, isUrgent }) => (
+    <div className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-lg ${isUrgent ? 'bg-red-900/30 border border-red-500/50' : 'bg-slate-800'}`}>
       <div className="flex-1">
         <div className="text-white">{reminder.reminder_text}</div>
-        <div className="text-sm text-slate-400 mt-1">{reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}</div>
+        <div className="text-sm text-slate-400 mt-1">
+          {reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}
+        </div>
       </div>
       <div className="flex gap-2 self-start md:self-auto">
         <button onClick={() => onGoToChat(reminder.client_id)} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-lg text-sm font-medium">
@@ -614,13 +627,57 @@ const Reminders = ({ reminders, onComplete, onGoToChat }) => {
       </div>
     </div>
   );
+  
   return (
     <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
       <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Напоминания</h2>
-      {overdue.length > 0 && <div className="mb-6"><h3 className="text-lg font-medium text-red-400 mb-3">🔴 Просрочено</h3><div className="space-y-2">{overdue.map(r => <ReminderItem key={r.id} reminder={r} />)}</div></div>}
-      {today.length > 0 && <div className="mb-6"><h3 className="text-lg font-medium text-amber-400 mb-3">🟡 Сегодня</h3><div className="space-y-2">{today.map(r => <ReminderItem key={r.id} reminder={r} />)}</div></div>}
-      {future.length > 0 && <div className="mb-6"><h3 className="text-lg font-medium text-slate-300 mb-3">🔵 Предстоящие</h3><div className="space-y-2">{future.map(r => <ReminderItem key={r.id} reminder={r} />)}</div></div>}
-      {reminders.filter(r => !r.is_completed).length === 0 && <div className="text-center text-slate-500 py-12">Нет активных напоминаний</div>}
+      
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        <button 
+          onClick={() => setTab('now')} 
+          className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'now' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+        >
+          🔔 Сейчас
+          {activeNow.length > 0 && (
+            <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'now' ? 'bg-black/20' : 'bg-red-500 text-white'}`}>
+              {activeNow.length}
+            </span>
+          )}
+        </button>
+        <button 
+          onClick={() => setTab('scheduled')} 
+          className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'scheduled' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+        >
+          📅 Запланировано
+          {scheduled.length > 0 && (
+            <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'scheduled' ? 'bg-black/20' : 'bg-slate-600'}`}>
+              {scheduled.length}
+            </span>
+          )}
+        </button>
+      </div>
+      
+      {/* Content */}
+      {tab === 'now' && (
+        <div className="space-y-3">
+          {activeNow.length > 0 ? (
+            activeNow.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={true} />)
+          ) : (
+            <div className="text-center text-slate-500 py-12">Нет активных напоминаний</div>
+          )}
+        </div>
+      )}
+      
+      {tab === 'scheduled' && (
+        <div className="space-y-3">
+          {scheduled.length > 0 ? (
+            scheduled.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={false} />)
+          ) : (
+            <div className="text-center text-slate-500 py-12">Нет запланированных напоминаний</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -639,11 +696,20 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
   const [unreadDialogs, setUnreadDialogs] = useState(0);
+  const [activeRemindersCount, setActiveRemindersCount] = useState(0);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Автообновление напоминаний каждую минуту
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadReminders();
+    }, 60000); // каждую минуту
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -727,7 +793,17 @@ export default function App() {
   };
 
   const loadAuthorizedUsers = async () => { const { data } = await supabase.from('authorized_users').select('*').order('created_at', { ascending: false }); if (data) setAuthorizedUsers(data); };
-  const loadReminders = async () => { const { data } = await supabase.from('reminders').select('*, clients(first_name, last_name)').eq('is_completed', false).order('remind_at'); if (data) setReminders(data); };
+  
+  const loadReminders = async () => { 
+    const { data } = await supabase.from('reminders').select('*, clients(first_name, last_name)').eq('is_completed', false).order('remind_at'); 
+    if (data) {
+      setReminders(data);
+      // Считаем только те напоминания, время которых уже наступило
+      const now = new Date();
+      const activeCount = data.filter(r => new Date(r.remind_at) <= now).length;
+      setActiveRemindersCount(activeCount);
+    }
+  };
 
   const handleSelectClient = (client) => { 
     setSelectedClient(client); 
@@ -778,8 +854,9 @@ export default function App() {
 
   const handleStatusChange = async (status) => {
     if (!selectedClient) return;
-    await supabase.from('clients').update({ status }).eq('id', selectedClient.id);
-    setSelectedClient(prev => ({ ...prev, status }));
+    const now = new Date().toISOString();
+    await supabase.from('clients').update({ status, status_changed_at: now }).eq('id', selectedClient.id);
+    setSelectedClient(prev => ({ ...prev, status, status_changed_at: now }));
     loadClients();
   };
 
@@ -868,14 +945,14 @@ export default function App() {
         <div className="flex gap-1 md:gap-2">
           {[
             { id: 'chat', label: '💬', fullLabel: '💬 Чаты', count: totalUnread },
-            { id: 'reminders', label: '🔔', fullLabel: '🔔 Напоминания', count: reminders.length },
+            { id: 'reminders', label: '🔔', fullLabel: '🔔 Напоминания', count: activeRemindersCount },
             { id: 'analytics', label: '📊', fullLabel: '📊 Аналитика' },
             { id: 'access', label: '👥', fullLabel: '👥 Доступ' }
           ].map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-1 md:gap-2 text-sm md:text-base ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'text-slate-300 hover:bg-slate-800'}`}>
               <span className="md:hidden">{tab.label}</span>
               <span className="hidden md:inline">{tab.fullLabel}</span>
-              {tab.count > 0 && <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20 text-black' : 'bg-amber-500 text-black'}`}>{tab.count}</span>}
+              {tab.count > 0 && <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20 text-black' : tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-amber-500 text-black'}`}>{tab.count}</span>}
             </button>
           ))}
         </div>
