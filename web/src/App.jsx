@@ -6,11 +6,11 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const STATUSES = {
-  new: { label: 'Новый', color: 'bg-gray-500', order: 1 },
-  diagnostic_scheduled: { label: 'Диагностика запланирована', color: 'bg-yellow-500', order: 2 },
-  diagnostic_done: { label: 'Диагностика проведена', color: 'bg-blue-500', order: 3 },
-  call_scheduled: { label: 'Звонок запланирован', color: 'bg-purple-500', order: 4 },
-  call_done: { label: 'Звонок проведён', color: 'bg-green-500', order: 5 },
+  new: { label: 'Новий', color: 'bg-gray-500', order: 1 },
+  diagnostic_scheduled: { label: 'Діагностика запланована', color: 'bg-yellow-500', order: 2 },
+  diagnostic_done: { label: 'Діагностика проведена', color: 'bg-blue-500', order: 3 },
+  call_scheduled: { label: 'Дзвінок запланований', color: 'bg-purple-500', order: 4 },
+  call_done: { label: 'Дзвінок проведено', color: 'bg-green-500', order: 5 },
 };
 
 const formatDate = (dateStr) => {
@@ -21,58 +21,39 @@ const formatDate = (dateStr) => {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  if (diffMins < 1) return 'только что';
-  if (diffMins < 60) return `${diffMins} мин назад`;
-  if (diffHours < 24) return `${diffHours} ч назад`;
-  if (diffDays < 7) return `${diffDays} дн назад`;
-  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  if (diffMins < 1) return 'щойно';
+  if (diffMins < 60) return diffMins + ' хв тому';
+  if (diffHours < 24) return diffHours + ' год тому';
+  if (diffDays < 7) return diffDays + ' дн тому';
+  return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
 };
 
 const formatFullDate = (dateStr) => {
   if (!dateStr) return '';
-  return new Date(dateStr).toLocaleDateString('ru-RU', {
-    day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
-  });
+  return new Date(dateStr).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 };
 
 const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onClose, lastMessages }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const filteredClients = clients
-    .filter(c => filter === 'all' || c.status === filter)
-    .filter(c => {
-      if (!search) return true;
-      const s = search.toLowerCase();
-      return c.first_name?.toLowerCase().includes(s) || c.last_name?.toLowerCase().includes(s) || c.telegram_username?.toLowerCase().includes(s);
-    })
-    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const filteredClients = clients.filter(c => filter === 'all' || c.status === filter).filter(c => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return c.first_name?.toLowerCase().includes(s) || c.last_name?.toLowerCase().includes(s) || c.telegram_username?.toLowerCase().includes(s);
+  }).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
-  const filterLabels = {
-    all: 'Все',
-    new: 'Новые',
-    diagnostic_scheduled: 'Запл. диагн.',
-    diagnostic_done: 'Пров. диагн.',
-    call_scheduled: 'Запл. звонок',
-    call_done: 'Пров. звонок'
-  };
+  const filterLabels = { all: 'Всі', new: 'Нові', diagnostic_scheduled: 'Запл. діагн.', diagnostic_done: 'Пров. діагн.', call_scheduled: 'Запл. дзвінок', call_done: 'Пров. дзвінок' };
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border-r border-slate-700">
       <div className="p-4 border-b border-slate-700">
-        <input type="text" placeholder="Поиск клиента..." value={search} onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
+        <input type="text" placeholder="Пошук клієнта..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
       </div>
       <div className="p-3 border-b border-slate-700 flex flex-wrap gap-2">
-        <button onClick={() => setFilter('all')} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === 'all' ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-          {filterLabels.all} ({clients.length})
-        </button>
-        {Object.entries(STATUSES).map(([key, { label }]) => {
+        <button onClick={() => setFilter('all')} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === 'all' ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>{filterLabels.all} ({clients.length})</button>
+        {Object.entries(STATUSES).map(([key]) => {
           const count = clients.filter(c => c.status === key).length;
-          return (
-            <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === key ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-              {filterLabels[key]} ({count})
-            </button>
-          );
+          return (<button key={key} onClick={() => setFilter(key)} className={`px-3 py-1 rounded-full text-xs font-medium transition ${filter === key ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>{filterLabels[key]} ({count})</button>);
         })}
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -80,25 +61,13 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
           const unread = unreadCounts[client.id] || 0;
           const isSelected = selectedClient?.id === client.id;
           const lastMsg = lastMessages?.[client.id];
-          const lastMsgText = lastMsg?.content_type === 'text' ? lastMsg.text_content : 
-                            lastMsg?.content_type === 'photo' ? '📷 Фото' :
-                            lastMsg?.content_type === 'video' ? '🎬 Видео' :
-                            lastMsg?.content_type === 'voice' ? '🎤 Голосовое' :
-                            lastMsg?.content_type === 'video_note' ? '⭕ Видео-кружок' :
-                            lastMsg?.content_type === 'document' ? '📄 Документ' : '';
-          
+          const lastMsgText = lastMsg?.content_type === 'text' ? lastMsg.text_content : lastMsg?.content_type === 'photo' ? '📷 Фото' : lastMsg?.content_type === 'video' ? '🎬 Відео' : lastMsg?.content_type === 'voice' ? '🎤 Голосове' : lastMsg?.content_type === 'video_note' ? '⭕ Відео-кружок' : lastMsg?.content_type === 'document' ? '📄 Документ' : '';
           return (
-            <div key={client.id} onClick={() => { onSelectClient(client); if (onClose) onClose(); }}
-              className={`p-4 border-b border-slate-700/50 cursor-pointer transition ${isSelected ? 'bg-slate-800' : 'hover:bg-slate-800/50'}`}>
+            <div key={client.id} onClick={() => { onSelectClient(client); if (onClose) onClose(); }} className={`p-4 border-b border-slate-700/50 cursor-pointer transition ${isSelected ? 'bg-slate-800' : 'hover:bg-slate-800/50'}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-black font-bold">
-                    {client.first_name?.[0] || '?'}
-                  </div>
-                  <div>
-                    <div className="font-medium text-white">{client.first_name} {client.last_name}</div>
-                    <div className="text-sm text-slate-400 truncate max-w-[180px]">{lastMsgText || 'Нет сообщений'}</div>
-                  </div>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-black font-bold">{client.first_name?.[0] || '?'}</div>
+                  <div><div className="font-medium text-white">{client.first_name} {client.last_name}</div><div className="text-sm text-slate-400 truncate max-w-[180px]">{lastMsgText || 'Немає повідомлень'}</div></div>
                 </div>
                 {unread > 0 && <span className="bg-amber-500 text-black text-xs font-bold px-2 py-1 rounded-full">{unread}</span>}
               </div>
@@ -110,13 +79,13 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
             </div>
           );
         })}
-        {filteredClients.length === 0 && <div className="p-8 text-center text-slate-500">Клиенты не найдены</div>}
+        {filteredClients.length === 0 && <div className="p-8 text-center text-slate-500">Клієнтів не знайдено</div>}
       </div>
     </div>
   );
 };
 
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
@@ -128,6 +97,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [isVideoRecording, setIsVideoRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -141,27 +111,16 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   if (!client) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-slate-950 text-slate-500">
-        <div className="text-center"><div className="text-6xl mb-4">💬</div><div>Выберите клиента для начала общения</div></div>
-      </div>
-    );
+    return (<div className="flex-1 flex items-center justify-center bg-slate-950 text-slate-500"><div className="text-center"><div className="text-6xl mb-4">💬</div><div>Оберіть клієнта для початку спілкування</div></div></div>);
   }
 
   const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage); setNewMessage(''); };
   const handleKeyPress = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
-
   const handleFileSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
     setUploading(true);
-    try {
-      await onSendFile(file);
-    } catch (err) {
-      console.error('Upload error:', err);
-      alert('Ошибка загрузки файла');
-    }
+    try { await onSendFile(file); } catch (err) { alert('Помилка завантаження файлу'); }
     setUploading(false);
     e.target.value = '';
   };
@@ -169,163 +128,76 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Пробуем использовать ogg формат, если браузер поддерживает
       let mimeType = 'audio/webm;codecs=opus';
-      if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-        mimeType = 'audio/ogg;codecs=opus';
-      } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        mimeType = 'audio/webm;codecs=opus';
-      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-        mimeType = 'audio/mp4';
-      }
-      
+      if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mimeType = 'audio/ogg;codecs=opus';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
-
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       mediaRecorder.onstop = async () => {
-        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+        const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        const audioFile = new File([audioBlob], `voice_${Date.now()}.${ext}`, { type: mimeType });
-        
+        const audioFile = new File([audioBlob], 'voice_' + Date.now() + '.' + ext, { type: mimeType });
         stream.getTracks().forEach(track => track.stop());
         clearInterval(recordingTimerRef.current);
         setRecordingTime(0);
         setIsRecording(false);
-        
         setUploading(true);
-        try {
-          await onSendFile(audioFile, 'voice');
-        } catch (err) {
-          console.error('Upload error:', err);
-          alert('Ошибка отправки аудио');
-        }
+        try { await onSendFile(audioFile, 'voice'); } catch (err) { alert('Помилка відправки аудіо'); }
         setUploading(false);
       };
-
       mediaRecorder.start();
       setIsRecording(true);
-      setRecordingTime(0);
-      
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error('Microphone access error:', err);
-      alert('Не удалось получить доступ к микрофону');
-    }
+      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+    } catch (err) { alert('Не вдалося отримати доступ до мікрофона'); }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
+  const stopRecording = () => { if (mediaRecorderRef.current && isRecording) mediaRecorderRef.current.stop(); };
   const cancelRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      mediaRecorderRef.current.stream?.getTracks().forEach(track => track.stop());
       clearInterval(recordingTimerRef.current);
       setRecordingTime(0);
       setIsRecording(false);
-      audioChunksRef.current = [];
     }
   };
 
   const formatRecordingTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return mins + ':' + secs.toString().padStart(2, '0');
   };
 
-  // Функции для записи видео-кружочка
   const startVideoRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 384, height: 384, facingMode: 'user' }, 
-        audio: true 
-      });
-      
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 384, height: 384, facingMode: 'user' }, audio: true });
       videoStreamRef.current = stream;
       setShowVideoPreview(true);
-      
-      // Показываем превью
-      setTimeout(() => {
-        if (videoPreviewRef.current) {
-          videoPreviewRef.current.srcObject = stream;
-        }
-      }, 100);
-      
-      let mimeType = 'video/webm;codecs=vp8,opus';
-      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
-        mimeType = 'video/webm;codecs=vp9,opus';
-      } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-        mimeType = 'video/mp4';
-      }
-      
+      setTimeout(() => { if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream; }, 100);
+      const mimeType = 'video/webm;codecs=vp8,opus';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       videoChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          videoChunksRef.current.push(e.data);
-        }
-      };
-
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) videoChunksRef.current.push(e.data); };
       mediaRecorder.onstop = async () => {
         const videoBlob = new Blob(videoChunksRef.current, { type: mimeType });
-        const videoFile = new File([videoBlob], `video_note_${Date.now()}.webm`, { type: mimeType });
-        
+        const videoFile = new File([videoBlob], 'video_note_' + Date.now() + '.webm', { type: mimeType });
         stream.getTracks().forEach(track => track.stop());
         clearInterval(recordingTimerRef.current);
         setRecordingTime(0);
         setIsVideoRecording(false);
         setShowVideoPreview(false);
-        
         setUploading(true);
-        try {
-          await onSendFile(videoFile, 'video_note');
-        } catch (err) {
-          console.error('Upload error:', err);
-          alert('Ошибка отправки видео');
-        }
+        try { await onSendFile(videoFile, 'video_note'); } catch (err) { alert('Помилка відправки відео'); }
         setUploading(false);
       };
-
       mediaRecorder.start();
       setIsVideoRecording(true);
-      setRecordingTime(0);
-      
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => {
-          // Максимум 60 секунд для видео-кружочка
-          if (prev >= 59) {
-            stopVideoRecording();
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    } catch (err) {
-      console.error('Camera access error:', err);
-      alert('Не удалось получить доступ к камере');
-    }
+      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => { if (prev >= 59) { stopVideoRecording(); return prev; } return prev + 1; }), 1000);
+    } catch (err) { alert('Не вдалося отримати доступ до камери'); }
   };
 
-  const stopVideoRecording = () => {
-    if (mediaRecorderRef.current && isVideoRecording) {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
+  const stopVideoRecording = () => { if (mediaRecorderRef.current && isVideoRecording) mediaRecorderRef.current.stop(); };
   const cancelVideoRecording = () => {
     if (mediaRecorderRef.current && isVideoRecording) {
       videoStreamRef.current?.getTracks().forEach(track => track.stop());
@@ -333,55 +205,43 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       setRecordingTime(0);
       setIsVideoRecording(false);
       setShowVideoPreview(false);
-      videoChunksRef.current = [];
     }
+  };
+
+  const handleAddReminderSubmit = () => {
+    if (!reminderText || !reminderDate) return;
+    onAddReminder(reminderText, reminderDate);
+    setReminderText('');
+    setReminderDate('');
+    setShowReminder(false);
   };
 
   return (
     <div className="flex-1 flex bg-slate-950 relative">
       <div className="flex-1 flex flex-col">
-        {/* Header */}
         <div className="p-3 md:p-4 bg-slate-900 border-b border-slate-700 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
-            {isMobile && (
-              <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              </button>
-            )}
+            {isMobile && (<button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>)}
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-black font-bold flex-shrink-0">{client.first_name?.[0] || '?'}</div>
-            <div className="min-w-0 flex-1">
-              <div className="font-medium text-white truncate">{client.first_name} {client.last_name}</div>
-              <div className="text-sm text-slate-400 truncate">@{client.telegram_username}</div>
-            </div>
+            <div className="min-w-0 flex-1"><div className="font-medium text-white truncate">{client.first_name} {client.last_name}</div><div className="text-sm text-slate-400 truncate">@{client.telegram_username}</div></div>
           </div>
           <div className="flex items-center gap-2">
             <select value={client.status} onChange={(e) => onStatusChange(e.target.value)} className="px-2 md:px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-amber-500 text-sm">
               {Object.entries(STATUSES).map(([key, { label }]) => (<option key={key} value={key}>{isMobile ? label.split(' ')[0] : label}</option>))}
             </select>
-            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 md:hidden">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </button>
+            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 md:hidden"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
           </div>
         </div>
         
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4">
           {messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] md:max-w-md rounded-2xl px-3 md:px-4 py-2 md:py-3 ${msg.direction === 'expert' ? 'bg-amber-500 text-black rounded-br-md' : 'bg-slate-800 text-white rounded-bl-md'}`}>
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="Фото" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
-                {msg.content_type === 'video_note' && msg.file_url && (
-                  <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />
-                )}
+                {msg.content_type === 'video_note' && msg.file_url && <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'voice' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
-                {msg.content_type === 'audio' && msg.file_url && <audio src={msg.file_url} controls className="mb-2 max-w-full" />}
-                {msg.content_type === 'document' && msg.file_url && (
-                  <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-blue-400 hover:underline mb-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    {msg.file_name || 'Документ'}
-                  </a>
-                )}
+                {msg.content_type === 'document' && msg.file_url && (<a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-blue-400 hover:underline mb-2"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>{msg.file_name || 'Документ'}</a>)}
                 {msg.text_content && <div className="break-words">{msg.text_content}</div>}
                 <div className={`text-xs mt-1 ${msg.direction === 'expert' ? 'text-black/60' : 'text-slate-500'}`}>{formatFullDate(msg.created_at)}</div>
               </div>
@@ -390,153 +250,94 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
           <div ref={messagesEndRef} />
         </div>
         
-        {/* Input */}
         <div className="p-3 md:p-4 bg-slate-900 border-t border-slate-700">
           {isRecording ? (
             <div className="flex items-center gap-3 bg-slate-800 rounded-xl p-3">
-              <button onClick={cancelRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition" title="Отменить">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-              <div className="flex-1 flex items-center gap-3">
-                <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
-                <span className="text-white font-medium">🎤 Запись... {formatRecordingTime(recordingTime)}</span>
-              </div>
-              <button onClick={stopRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition" title="Отправить">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-              </button>
+              <button onClick={cancelRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+              <div className="flex-1 flex items-center gap-3"><span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span><span className="text-white font-medium">🎤 Запис... {formatRecordingTime(recordingTime)}</span></div>
+              <button onClick={stopRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></button>
             </div>
           ) : isVideoRecording || showVideoPreview ? (
             <div className="flex flex-col items-center gap-3 bg-slate-800 rounded-xl p-4">
               <div className="relative">
-                <video 
-                  ref={videoPreviewRef} 
-                  autoPlay 
-                  muted 
-                  playsInline
-                  className="w-48 h-48 rounded-full object-cover border-4 border-amber-500"
-                />
-                {isVideoRecording && (
-                  <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2">
-                    <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
-                    {formatRecordingTime(recordingTime)}
-                  </div>
-                )}
+                <video ref={videoPreviewRef} autoPlay muted playsInline className="w-48 h-48 rounded-full object-cover border-4 border-amber-500" />
+                {isVideoRecording && (<div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2"><span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>{formatRecordingTime(recordingTime)}</div>)}
               </div>
               <div className="flex gap-3">
-                <button onClick={cancelVideoRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition" title="Отменить">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                {isVideoRecording && (
-                  <button onClick={stopVideoRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition" title="Отправить">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                  </button>
-                )}
+                <button onClick={cancelVideoRecording} className="p-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-full transition"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                {isVideoRecording && (<button onClick={stopVideoRecording} className="p-3 bg-amber-500 hover:bg-amber-400 text-black rounded-full transition"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></button>)}
               </div>
             </div>
           ) : (
-            <div className="flex gap-2 md:gap-3">
-              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
-              <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Прикрепить файл">
-                {uploading ? (
-                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
-                )}
-              </button>
-              <button onClick={startRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Записать аудио">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
-              </button>
-              <button onClick={startVideoRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0" title="Записать видео-кружочек">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-              </button>
-              <textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Введите сообщение..." rows={1}
-                className="flex-1 px-3 md:px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
-              <button onClick={handleSend} disabled={!newMessage.trim()} className="px-4 md:px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-black font-medium rounded-xl transition flex-shrink-0">
-                <span className="hidden md:inline">Отправить</span>
-                <svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-              </button>
+            <div className="flex flex-col gap-2">
+              {showTemplates && templates && templates.length > 0 && (
+                <div className="bg-slate-800 rounded-xl p-2 max-h-48 overflow-y-auto">
+                  {templates.map(t => (<button key={t.id} onClick={() => { onSendTemplate(t.content); setShowTemplates(false); }} className="w-full text-left px-3 py-2 hover:bg-slate-700 rounded-lg text-white text-sm"><div className="font-medium">{t.title}</div><div className="text-slate-400 text-xs truncate">{t.content}</div></button>))}
+                </div>
+              )}
+              <div className="flex gap-2 md:gap-3">
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg></button>
+                <button onClick={startRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg></button>
+                <button onClick={startVideoRecording} disabled={uploading} className="p-3 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl transition flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg></button>
+                <button onClick={() => setShowTemplates(!showTemplates)} className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
+                <textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Введіть повідомлення..." rows={1} className="flex-1 px-3 md:px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
+                <button onClick={handleSend} disabled={!newMessage.trim()} className="px-4 md:px-6 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-black font-medium rounded-xl transition flex-shrink-0"><span className="hidden md:inline">Надіслати</span><svg className="w-5 h-5 md:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></button>
+              </div>
             </div>
           )}
         </div>
       </div>
       
-      {/* Sidebar - Desktop always visible, Mobile as overlay */}
       <div className={`${isMobile ? 'absolute inset-y-0 right-0 z-10 transform transition-transform duration-300' : ''} ${isMobile && !showSidebar ? 'translate-x-full' : 'translate-x-0'} w-80 bg-slate-900 border-l border-slate-700 flex flex-col ${isMobile ? 'shadow-2xl' : 'hidden md:flex'}`}>
-        {isMobile && (
-          <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-            <h3 className="font-medium text-white">Информация</h3>
-            <button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-        )}
-        <div className={`p-4 border-b border-slate-700 ${isMobile ? '' : ''}`}>
-          {!isMobile && <h3 className="font-medium text-white mb-3">Информация</h3>}
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-slate-400">Telegram ID:</span><span className="text-white">{client.telegram_id}</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">Добавлен:</span><span className="text-white">{formatFullDate(client.created_at)}</span></div>
-          </div>
-        </div>
-        <div className="p-4 border-b border-slate-700 flex-1">
-          <h3 className="font-medium text-white mb-3">Заметки</h3>
-          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Заметки по клиенту..."
-            className="w-full h-32 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none text-sm" />
-          <button onClick={() => onNotesChange(notes)} className="mt-2 w-full py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">Сохранить заметки</button>
-        </div>
-        <div className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium text-white">Напоминания</h3>
-            <button onClick={() => setShowReminder(!showReminder)} className="text-amber-500 hover:text-amber-400 text-sm">+ Добавить</button>
-          </div>
-          {showReminder && (
-            <div className="mb-4 p-3 bg-slate-800 rounded-lg space-y-2">
-              <input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст напоминания..." className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-400 focus:outline-none text-sm" />
-              <input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none text-sm" />
-              <button onClick={() => { if (reminderText && reminderDate) { onAddReminder(reminderText, reminderDate); setReminderText(''); setReminderDate(''); setShowReminder(false); } }} className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-black rounded text-sm font-medium">Создать</button>
+        {isMobile && (<div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="font-medium text-white">Інформація</h3><button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>)}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <h3 className="text-sm font-medium text-slate-400 mb-2">Інформація</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-slate-400">Telegram:</span><span className="text-white">@{client.telegram_username || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Телефон:</span><span className="text-white">{client.phone || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Email:</span><span className="text-white">{client.email || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Telegram ID:</span><span className="text-white">{client.telegram_id}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Додано:</span><span className="text-white">{formatFullDate(client.created_at)}</span></div>
             </div>
-          )}
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-slate-400 mb-2">Нотатки</h3>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Додати нотатки..." rows={4} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm resize-none" />
+            <button onClick={() => onNotesChange(notes)} className="mt-2 w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">Зберегти нотатки</button>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2"><h3 className="text-sm font-medium text-slate-400">Нагадування</h3><button onClick={() => setShowReminder(!showReminder)} className="text-amber-500 text-sm hover:underline">+ Додати</button></div>
+            {showReminder && (
+              <div className="bg-slate-800 rounded-lg p-3 space-y-2">
+                <input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст нагадування" className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm" />
+                <input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-amber-500 text-sm" />
+                <button onClick={handleAddReminderSubmit} className="w-full px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg text-sm transition">Додати</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      
-      {/* Overlay for mobile sidebar */}
-      {isMobile && showSidebar && (
-        <div className="absolute inset-0 bg-black/50 z-0" onClick={() => setShowSidebar(false)} />
-      )}
+      {isMobile && showSidebar && <div className="absolute inset-0 bg-black/50 z-0" onClick={() => setShowSidebar(false)} />}
     </div>
   );
 };
 
-const Analytics = ({ analytics, clients, unreadDialogs, onPeriodChange, period }) => {
-  const periods = [
-    { value: 'all', label: 'Всё время' },
-    { value: 'today', label: 'Сегодня' },
-    { value: 'week', label: 'Неделя' },
-    { value: 'month', label: 'Месяц' },
-    { value: '3months', label: '3 месяца' }
-  ];
-
+const Analytics = ({ analytics, unreadDialogs, onPeriodChange, period }) => {
+  const periods = [{ value: 'all', label: 'Весь час' }, { value: 'today', label: 'Сьогодні' }, { value: 'week', label: 'Тиждень' }, { value: 'month', label: 'Місяць' }, { value: '3months', label: '3 місяці' }];
   if (!analytics) return null;
   return (
     <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 gap-4">
-        <h2 className="text-xl md:text-2xl font-bold text-white">Аналитика</h2>
-        <div className="flex gap-2 flex-wrap">
-          {periods.map(p => (
-            <button 
-              key={p.value} 
-              onClick={() => onPeriodChange(p.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <h2 className="text-xl md:text-2xl font-bold text-white">Аналітика</h2>
+        <div className="flex gap-2 flex-wrap">{periods.map(p => (<button key={p.value} onClick={() => onPeriodChange(p.value)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>{p.label}</button>))}</div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
-        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-white">{analytics.total_clients}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Всего клиентов</div></div>
-        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-amber-500">{unreadDialogs}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Ждут ответа</div></div>
-        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-green-500">{analytics.conversion_rates?.to_diagnostic || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В диагностику</div></div>
-        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-purple-500">{analytics.conversion_rates?.to_call || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В звонок</div></div>
+        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-white">{analytics.total_clients}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Всього клієнтів</div></div>
+        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-amber-500">{unreadDialogs}</div><div className="text-slate-400 mt-1 text-sm md:text-base">Чекають відповіді</div></div>
+        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-green-500">{analytics.conversion_rates?.to_diagnostic || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В діагностику</div></div>
+        <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700"><div className="text-2xl md:text-3xl font-bold text-purple-500">{analytics.conversion_rates?.to_call || 0}%</div><div className="text-slate-400 mt-1 text-sm md:text-base">В дзвінок</div></div>
       </div>
       <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700">
         <h3 className="text-lg font-medium text-white mb-4">Воронка</h3>
@@ -544,13 +345,7 @@ const Analytics = ({ analytics, clients, unreadDialogs, onPeriodChange, period }
           {Object.entries(STATUSES).map(([key, { label, color }]) => {
             const count = analytics.status_counts?.[key] || 0;
             const pct = analytics.total_clients > 0 ? Math.round(count / analytics.total_clients * 100) : 0;
-            return (
-              <div key={key} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
-                <div className="md:w-48 text-slate-300 text-sm md:text-base">{label}</div>
-                <div className="flex-1 bg-slate-800 rounded-full h-6 md:h-8 overflow-hidden"><div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} /></div>
-                <div className="md:w-20 text-right text-white font-medium text-sm md:text-base">{count} ({pct}%)</div>
-              </div>
-            );
+            return (<div key={key} className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4"><div className="md:w-48 text-slate-300 text-sm md:text-base">{label}</div><div className="flex-1 bg-slate-800 rounded-full h-6 md:h-8 overflow-hidden"><div className={`h-full ${color} transition-all duration-500`} style={{ width: pct + '%' }} /></div><div className="md:w-20 text-right text-white font-medium text-sm md:text-base">{count} ({pct}%)</div></div>);
           })}
         </div>
       </div>
@@ -564,30 +359,20 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
   const handleAdd = () => { if (!username && !email) return; onAddUser({ telegram_username: username, email }); setUsername(''); setEmail(''); };
   return (
     <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
-      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Управление доступом</h2>
+      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Керування доступом</h2>
       <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
-        <h3 className="text-lg font-medium text-white mb-4">Добавить пользователя</h3>
+        <h3 className="text-lg font-medium text-white mb-4">Додати користувача</h3>
         <div className="flex flex-col md:flex-row gap-3 md:gap-4">
           <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="@username в Telegram" className="flex-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (опционально)" className="flex-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
-          <button onClick={handleAdd} className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg transition">Добавить</button>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (опціонально)" className="flex-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
+          <button onClick={handleAdd} className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg transition">Додати</button>
         </div>
       </div>
       <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden overflow-x-auto">
-        <table className="w-full min-w-[500px]">
-          <thead className="bg-slate-800"><tr><th className="text-left p-4 text-slate-300 font-medium">Username</th><th className="text-left p-4 text-slate-300 font-medium">Email</th><th className="text-left p-4 text-slate-300 font-medium">Добавлен</th><th className="text-right p-4 text-slate-300 font-medium">Действия</th></tr></thead>
-          <tbody>
-            {authorizedUsers.map((user) => (
-              <tr key={user.id} className="border-t border-slate-700">
-                <td className="p-4 text-white">@{user.telegram_username || '—'}</td>
-                <td className="p-4 text-slate-400">{user.email || '—'}</td>
-                <td className="p-4 text-slate-400">{formatFullDate(user.created_at)}</td>
-                <td className="p-4 text-right"><button onClick={() => onRemoveUser(user.id)} className="text-red-400 hover:text-red-300">Удалить</button></td>
-              </tr>
-            ))}
-          </tbody>
+        <table className="w-full min-w-[500px]"><thead className="bg-slate-800"><tr><th className="text-left p-4 text-slate-300 font-medium">Username</th><th className="text-left p-4 text-slate-300 font-medium">Email</th><th className="text-left p-4 text-slate-300 font-medium">Додано</th><th className="text-right p-4 text-slate-300 font-medium">Дії</th></tr></thead>
+          <tbody>{authorizedUsers.map((user) => (<tr key={user.id} className="border-t border-slate-700"><td className="p-4 text-white">@{user.telegram_username || '—'}</td><td className="p-4 text-slate-400">{user.email || '—'}</td><td className="p-4 text-slate-400">{formatFullDate(user.created_at)}</td><td className="p-4 text-right"><button onClick={() => onRemoveUser(user.id)} className="text-red-400 hover:text-red-300">Видалити</button></td></tr>))}</tbody>
         </table>
-        {authorizedUsers.length === 0 && <div className="p-8 text-center text-slate-500">Нет авторизованных пользователей</div>}
+        {authorizedUsers.length === 0 && <div className="p-8 text-center text-slate-500">Немає авторизованих користувачів</div>}
       </div>
     </div>
   );
@@ -596,88 +381,46 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
 const Reminders = ({ reminders, onComplete, onGoToChat }) => {
   const [tab, setTab] = useState('now');
   const now = new Date();
-  
-  // "Сейчас" - просроченные и сегодняшние которые уже наступили
-  const activeNow = reminders.filter(r => {
-    const remindTime = new Date(r.remind_at);
-    return remindTime <= now && !r.is_completed;
-  });
-  
-  // "Запланировано" - будущие
-  const scheduled = reminders.filter(r => {
-    const remindTime = new Date(r.remind_at);
-    return remindTime > now && !r.is_completed;
-  });
-  
+  const activeNow = reminders.filter(r => new Date(r.remind_at) <= now && !r.is_completed);
+  const scheduled = reminders.filter(r => new Date(r.remind_at) > now && !r.is_completed);
   const ReminderItem = ({ reminder, isUrgent }) => (
     <div className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-lg ${isUrgent ? 'bg-red-900/30 border border-red-500/50' : 'bg-slate-800'}`}>
-      <div className="flex-1">
-        <div className="text-white">{reminder.reminder_text}</div>
-        <div className="text-sm text-slate-400 mt-1">
-          {reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}
-        </div>
-      </div>
-      <div className="flex gap-2 self-start md:self-auto">
-        <button onClick={() => onGoToChat(reminder.client_id)} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-lg text-sm font-medium">
-          Перейти в чат
-        </button>
-        <button onClick={() => onComplete(reminder.id)} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm">
-          ✓
-        </button>
-      </div>
+      <div className="flex-1"><div className="text-white">{reminder.reminder_text}</div><div className="text-sm text-slate-400 mt-1">{reminder.clients?.first_name} {reminder.clients?.last_name} • {formatFullDate(reminder.remind_at)}</div></div>
+      <div className="flex gap-2 self-start md:self-auto"><button onClick={() => onGoToChat(reminder.client_id)} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-lg text-sm font-medium">Перейти в чат</button><button onClick={() => onComplete(reminder.id)} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm">✓</button></div>
     </div>
   );
-  
   return (
     <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
-      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Напоминания</h2>
-      
-      {/* Tabs */}
+      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Нагадування</h2>
       <div className="flex gap-2 mb-6">
-        <button 
-          onClick={() => setTab('now')} 
-          className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'now' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-        >
-          🔔 Сейчас
-          {activeNow.length > 0 && (
-            <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'now' ? 'bg-black/20' : 'bg-red-500 text-white'}`}>
-              {activeNow.length}
-            </span>
-          )}
-        </button>
-        <button 
-          onClick={() => setTab('scheduled')} 
-          className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'scheduled' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-        >
-          📅 Запланировано
-          {scheduled.length > 0 && (
-            <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'scheduled' ? 'bg-black/20' : 'bg-slate-600'}`}>
-              {scheduled.length}
-            </span>
-          )}
-        </button>
+        <button onClick={() => setTab('now')} className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'now' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>🔔 Зараз {activeNow.length > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'now' ? 'bg-black/20' : 'bg-red-500 text-white'}`}>{activeNow.length}</span>}</button>
+        <button onClick={() => setTab('scheduled')} className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'scheduled' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>📅 Заплановано {scheduled.length > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'scheduled' ? 'bg-black/20' : 'bg-slate-600'}`}>{scheduled.length}</span>}</button>
       </div>
-      
-      {/* Content */}
-      {tab === 'now' && (
+      {tab === 'now' && <div className="space-y-3">{activeNow.length > 0 ? activeNow.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={true} />) : <div className="text-center text-slate-500 py-12">Немає активних нагадувань</div>}</div>}
+      {tab === 'scheduled' && <div className="space-y-3">{scheduled.length > 0 ? scheduled.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={false} />) : <div className="text-center text-slate-500 py-12">Немає запланованих нагадувань</div>}</div>}
+    </div>
+  );
+};
+
+const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const handleAdd = () => { if (!title || !content) return; onAddTemplate({ title, content }); setTitle(''); setContent(''); };
+  return (
+    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Шаблони повідомлень</h2>
+      <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Додати шаблон</h3>
         <div className="space-y-3">
-          {activeNow.length > 0 ? (
-            activeNow.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={true} />)
-          ) : (
-            <div className="text-center text-slate-500 py-12">Нет активных напоминаний</div>
-          )}
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Назва шаблону" className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500" />
+          <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Текст повідомлення" rows={4} className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none" />
+          <button onClick={handleAdd} className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg transition">Додати шаблон</button>
         </div>
-      )}
-      
-      {tab === 'scheduled' && (
-        <div className="space-y-3">
-          {scheduled.length > 0 ? (
-            scheduled.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={false} />)
-          ) : (
-            <div className="text-center text-slate-500 py-12">Нет запланированных напоминаний</div>
-          )}
-        </div>
-      )}
+      </div>
+      <div className="space-y-3">
+        {templates.map(t => (<div key={t.id} className="bg-slate-900 rounded-xl p-4 border border-slate-700 flex justify-between items-start gap-4"><div className="flex-1"><div className="font-medium text-white mb-1">{t.title}</div><div className="text-slate-400 text-sm whitespace-pre-wrap">{t.content}</div></div><button onClick={() => onDeleteTemplate(t.id)} className="text-red-400 hover:text-red-300 text-sm">Видалити</button></div>))}
+        {templates.length === 0 && <div className="text-center text-slate-500 py-12">Немає шаблонів</div>}
+      </div>
     </div>
   );
 };
@@ -692,6 +435,7 @@ export default function App() {
   const [analytics, setAnalytics] = useState(null);
   const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const [reminders, setReminders] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [showClientList, setShowClientList] = useState(true);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
@@ -704,53 +448,24 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Автообновление напоминаний каждую минуту
   useEffect(() => {
-    const interval = setInterval(() => {
-      loadReminders();
-    }, 60000); // каждую минуту
+    const interval = setInterval(() => loadReminders(), 60000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    loadClients(); loadAuthorizedUsers(); loadReminders();
-    
-    // Подписка на новых клиентов
-    const clientsSub = supabase.channel('clients-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => {
-        loadClients();
-      })
-      .subscribe();
-    
-    // Подписка на новые сообщения
-    const msgSub = supabase.channel('messages-changes')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        // Обновляем сообщения в текущем чате
-        if (selectedClient && payload.new.client_id === selectedClient.id) {
-          setMessages(prev => [...prev, payload.new]);
-        }
-        // Обновляем последние сообщения и счётчики
-        setLastMessages(prev => ({
-          ...prev,
-          [payload.new.client_id]: payload.new
-        }));
-        loadUnreadCounts();
-        // Пересортируем клиентов
-        setClients(prev => {
-          const updated = prev.map(c => 
-            c.id === payload.new.client_id 
-              ? { ...c, updated_at: new Date().toISOString() }
-              : c
-          );
-          return updated.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-        });
-      })
-      .subscribe();
-    
-    return () => { 
-      supabase.removeChannel(clientsSub); 
-      supabase.removeChannel(msgSub); 
-    };
+    loadClients(); loadAuthorizedUsers(); loadReminders(); loadTemplates();
+    const clientsSub = supabase.channel('clients-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => loadClients()).subscribe();
+    const msgSub = supabase.channel('messages-changes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+      if (selectedClient && payload.new.client_id === selectedClient.id) setMessages(prev => [...prev, payload.new]);
+      setLastMessages(prev => ({ ...prev, [payload.new.client_id]: payload.new }));
+      loadUnreadCounts();
+      setClients(prev => {
+        const updated = prev.map(c => c.id === payload.new.client_id ? { ...c, updated_at: new Date().toISOString() } : c);
+        return updated.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      });
+    }).subscribe();
+    return () => { supabase.removeChannel(clientsSub); supabase.removeChannel(msgSub); };
   }, [selectedClient]);
 
   const loadClients = async () => {
@@ -763,20 +478,17 @@ export default function App() {
     const msgs = {};
     for (const client of clientsList) {
       const { data } = await supabase.from('messages').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).limit(1);
-      if (data && data[0]) {
-        msgs[client.id] = data[0];
-      }
+      if (data && data[0]) msgs[client.id] = data[0];
     }
     setLastMessages(msgs);
   };
 
   const loadUnreadCounts = async () => {
     const { data } = await supabase.from('messages').select('client_id').eq('direction', 'client').eq('is_read', false);
-    if (data) { 
-      const counts = {}; 
-      data.forEach(m => { counts[m.client_id] = (counts[m.client_id] || 0) + 1; }); 
+    if (data) {
+      const counts = {};
+      data.forEach(m => { counts[m.client_id] = (counts[m.client_id] || 0) + 1; });
       setUnreadCounts(counts);
-      // Считаем количество диалогов с непрочитанными (ждут ответа)
       setUnreadDialogs(Object.keys(counts).length);
     }
   };
@@ -788,28 +500,25 @@ export default function App() {
     loadUnreadCounts();
   };
 
-  const computeAnalytics = (clientsData) => {
-    computeAnalyticsWithPeriod(clientsData, analyticsPeriod);
-  };
+  const computeAnalytics = (clientsData) => computeAnalyticsWithPeriod(clientsData, analyticsPeriod);
 
   const loadAuthorizedUsers = async () => { const { data } = await supabase.from('authorized_users').select('*').order('created_at', { ascending: false }); if (data) setAuthorizedUsers(data); };
-  
-  const loadReminders = async () => { 
-    const { data } = await supabase.from('reminders').select('*, clients(first_name, last_name)').eq('is_completed', false).order('remind_at'); 
+
+  const loadReminders = async () => {
+    const { data } = await supabase.from('reminders').select('*, clients(first_name, last_name)').eq('is_completed', false).order('remind_at');
     if (data) {
       setReminders(data);
-      // Считаем только те напоминания, время которых уже наступило
       const now = new Date();
-      const activeCount = data.filter(r => new Date(r.remind_at) <= now).length;
-      setActiveRemindersCount(activeCount);
+      setActiveRemindersCount(data.filter(r => new Date(r.remind_at) <= now).length);
     }
   };
 
-  const handleSelectClient = (client) => { 
-    setSelectedClient(client); 
-    loadMessages(client.id); 
-    if (isMobile) setShowClientList(false);
+  const loadTemplates = async () => {
+    const { data } = await supabase.from('message_templates').select('*').order('created_at', { ascending: false });
+    if (data) setTemplates(data);
   };
+
+  const handleSelectClient = (client) => { setSelectedClient(client); loadMessages(client.id); if (isMobile) setShowClientList(false); };
 
   const handleSendMessage = async (text) => {
     if (!selectedClient) return;
@@ -819,36 +528,18 @@ export default function App() {
 
   const handleSendFile = async (file, forceContentType = null) => {
     if (!selectedClient) return;
-    
-    const timestamp = Date.now();
-    const fileName = `expert_${timestamp}_${file.name}`;
-    const filePath = `uploads/${fileName}`;
-    
-    // Upload to storage
+    const fileExt = file.name.split('.').pop();
+    const filePath = selectedClient.id + '/' + Date.now() + '.' + fileExt;
     const { error: uploadError } = await supabase.storage.from('diagnostic-files').upload(filePath, file);
     if (uploadError) throw uploadError;
-    
-    // Get public URL
     const { data: { publicUrl } } = supabase.storage.from('diagnostic-files').getPublicUrl(filePath);
-    
-    // Determine content type
     let contentType = forceContentType || 'document';
     if (!forceContentType) {
       if (file.type.startsWith('image/')) contentType = 'photo';
       else if (file.type.startsWith('video/')) contentType = 'video';
       else if (file.type.startsWith('audio/')) contentType = 'voice';
     }
-    
-    // Save message
-    await supabase.from('messages').insert({
-      client_id: selectedClient.id,
-      direction: 'expert',
-      content_type: contentType,
-      file_url: publicUrl,
-      file_name: file.name,
-      is_read: false
-    });
-    
+    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: contentType, file_url: publicUrl, file_name: file.name, is_read: false });
     loadMessages(selectedClient.id);
   };
 
@@ -860,138 +551,65 @@ export default function App() {
     loadClients();
   };
 
-  const handleNotesChange = async (notes) => {
-    if (!selectedClient) return;
-    await supabase.from('clients').update({ notes }).eq('id', selectedClient.id);
-    setSelectedClient(prev => ({ ...prev, notes }));
-  };
+  const handleNotesChange = async (notes) => { if (!selectedClient) return; await supabase.from('clients').update({ notes }).eq('id', selectedClient.id); setSelectedClient(prev => ({ ...prev, notes })); };
 
-  const handleAddReminder = async (text, date) => {
-    if (!selectedClient) return;
-    await supabase.from('reminders').insert({ client_id: selectedClient.id, reminder_text: text, remind_at: date });
-    loadReminders();
-  };
+  const handleAddReminder = async (text, date) => { if (!selectedClient) return; await supabase.from('reminders').insert({ client_id: selectedClient.id, reminder_text: text, remind_at: date }); loadReminders(); };
 
   const handleCompleteReminder = async (id) => { await supabase.from('reminders').update({ is_completed: true }).eq('id', id); loadReminders(); };
   const handleAddAuthorizedUser = async (userData) => { await supabase.from('authorized_users').insert({ ...userData, telegram_username: userData.telegram_username?.toLowerCase().replace('@', '') }); loadAuthorizedUsers(); };
   const handleRemoveAuthorizedUser = async (id) => { await supabase.from('authorized_users').delete().eq('id', id); loadAuthorizedUsers(); };
 
+  const handleAddTemplate = async (templateData) => { await supabase.from('message_templates').insert(templateData); loadTemplates(); };
+  const handleDeleteTemplate = async (id) => { await supabase.from('message_templates').delete().eq('id', id); loadTemplates(); };
+
   const handleGoToChat = (clientId) => {
     const client = clients.find(c => c.id === clientId);
-    if (client) {
-      setSelectedClient(client);
-      loadMessages(client.id);
-      setActiveTab('chat');
-      if (isMobile) setShowClientList(false);
-    }
+    if (client) { setSelectedClient(client); loadMessages(client.id); setActiveTab('chat'); if (isMobile) setShowClientList(false); }
   };
 
-  const handlePeriodChange = (period) => {
-    setAnalyticsPeriod(period);
-    // Пересчитываем аналитику с учётом периода
-    computeAnalyticsWithPeriod(clients, period);
-  };
+  const handlePeriodChange = (period) => { setAnalyticsPeriod(period); computeAnalyticsWithPeriod(clients, period); };
 
   const computeAnalyticsWithPeriod = (clientsData, period) => {
     let filteredClients = clientsData;
     const now = new Date();
-    
     if (period !== 'all') {
       let startDate;
       switch (period) {
-        case 'today':
-          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          break;
-        case 'week':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case '3months':
-          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = null;
+        case 'today': startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
+        case 'week': startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+        case 'month': startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+        case '3months': startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000); break;
+        default: startDate = null;
       }
-      if (startDate) {
-        filteredClients = clientsData.filter(c => new Date(c.created_at) >= startDate);
-      }
+      if (startDate) filteredClients = clientsData.filter(c => { const dateToCheck = c.status_changed_at || c.created_at; return new Date(dateToCheck) >= startDate; });
     }
-    
     const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
     filteredClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
     const total = filteredClients.length;
-    setAnalytics({
-      total_clients: total, 
-      status_counts: statusCounts,
-      conversion_rates: { 
-        to_diagnostic: total > 0 ? Math.round((statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done) / total * 100) : 0, 
-        to_call: total > 0 ? Math.round(statusCounts.call_done / total * 100) : 0 
-      }
-    });
+    setAnalytics({ total_clients: total, status_counts: statusCounts, conversion_rates: { to_diagnostic: total > 0 ? Math.round((statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done) / total * 100) : 0, to_call: total > 0 ? Math.round(statusCounts.call_done / total * 100) : 0 } });
   };
 
   const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
 
   return (
     <div className="h-screen flex flex-col bg-slate-950">
-      {/* Navigation */}
       <nav className="bg-slate-900 border-b border-slate-700 px-3 md:px-6 py-2 md:py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xl md:text-2xl">💎</span>
-          <span className="text-lg md:text-xl font-bold text-white hidden sm:inline">Diagnostic CRM</span>
-        </div>
+        <div className="flex items-center gap-2"><span className="text-xl md:text-2xl">💎</span><span className="text-lg md:text-xl font-bold text-white hidden sm:inline">Diagnostic CRM</span></div>
         <div className="flex gap-1 md:gap-2">
-          {[
-            { id: 'chat', label: '💬', fullLabel: '💬 Чаты', count: totalUnread },
-            { id: 'reminders', label: '🔔', fullLabel: '🔔 Напоминания', count: activeRemindersCount },
-            { id: 'analytics', label: '📊', fullLabel: '📊 Аналитика' },
-            { id: 'access', label: '👥', fullLabel: '👥 Доступ' }
-          ].map(tab => (
+          {[{ id: 'chat', label: '💬', fullLabel: '💬 Чати', count: totalUnread }, { id: 'reminders', label: '🔔', fullLabel: '🔔 Нагадування', count: activeRemindersCount }, { id: 'templates', label: '📝', fullLabel: '📝 Шаблони' }, { id: 'analytics', label: '📊', fullLabel: '📊 Аналітика' }, { id: 'access', label: '👥', fullLabel: '👥 Доступ' }].map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-1 md:gap-2 text-sm md:text-base ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'text-slate-300 hover:bg-slate-800'}`}>
-              <span className="md:hidden">{tab.label}</span>
-              <span className="hidden md:inline">{tab.fullLabel}</span>
+              <span className="md:hidden">{tab.label}</span><span className="hidden md:inline">{tab.fullLabel}</span>
               {tab.count > 0 && <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20 text-black' : tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-amber-500 text-black'}`}>{tab.count}</span>}
             </button>
           ))}
         </div>
       </nav>
-      
-      {/* Content */}
       <div className="flex-1 flex overflow-hidden">
-        {activeTab === 'chat' && (
-          <>
-            {/* Client list - Hidden on mobile when chat is open */}
-            <div className={`${isMobile ? (showClientList ? 'w-full' : 'hidden') : 'w-80'}`}>
-              <ClientList 
-                clients={clients} 
-                selectedClient={selectedClient} 
-                onSelectClient={handleSelectClient} 
-                unreadCounts={unreadCounts}
-                lastMessages={lastMessages}
-                onClose={() => setShowClientList(false)}
-              />
-            </div>
-            {/* Chat window - Hidden on mobile when client list is open */}
-            <div className={`flex-1 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow 
-                client={selectedClient} 
-                messages={messages} 
-                onSendMessage={handleSendMessage}
-                onSendFile={handleSendFile}
-                onStatusChange={handleStatusChange} 
-                onNotesChange={handleNotesChange} 
-                onAddReminder={handleAddReminder}
-                onBack={() => setShowClientList(true)}
-                isMobile={isMobile}
-              />
-            </div>
-          </>
-        )}
-        {activeTab === 'analytics' && <Analytics analytics={analytics} clients={clients} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
+        {activeTab === 'chat' && (<><div className={`${isMobile ? (showClientList ? 'w-full' : 'hidden') : 'w-80'}`}><ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} /></div><div className={`flex-1 ${isMobile && showClientList ? 'hidden' : 'flex'}`}><ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} /></div></>)}
+        {activeTab === 'analytics' && <Analytics analytics={analytics} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
         {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
+        {activeTab === 'templates' && <Templates templates={templates} onAddTemplate={handleAddTemplate} onDeleteTemplate={handleDeleteTemplate} />}
       </div>
     </div>
   );
