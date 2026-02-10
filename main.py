@@ -106,7 +106,7 @@ async def is_authorized(username: str = None, telegram_id: int = None) -> bool:
     return False
 
 
-async def authorize_user(telegram_id: int, username: str = None, email: str = None):
+async def authorize_user(telegram_id: int, username: str = None, email: str = None, phone: str = None):
     """Добавить пользователя в авторизованные"""
     # Проверяем, не авторизован ли уже
     if await is_authorized(username, telegram_id):
@@ -115,18 +115,28 @@ async def authorize_user(telegram_id: int, username: str = None, email: str = No
     user_data = {
         "telegram_id": telegram_id,
         "telegram_username": username.lower() if username else None,
-        "email": email
+        "email": email,
+        "phone": phone
     }
     supabase.table("authorized_users").insert(user_data).execute()
 
 
-async def get_or_create_client(user: types.User) -> dict:
+async def get_or_create_client(user: types.User, email: str = None, phone: str = None) -> dict:
     """Получить или создать клиента"""
     result = supabase.table("clients").select("*").eq(
         "telegram_id", user.id
     ).execute()
     
     if result.data:
+        # Оновлюємо email і phone якщо є
+        if email or phone:
+            update_data = {}
+            if email:
+                update_data["email"] = email
+            if phone:
+                update_data["phone"] = phone
+            if update_data:
+                supabase.table("clients").update(update_data).eq("telegram_id", user.id).execute()
         return result.data[0]
     
     new_client = {
@@ -134,7 +144,9 @@ async def get_or_create_client(user: types.User) -> dict:
         "telegram_username": user.username,
         "first_name": user.first_name,
         "last_name": user.last_name,
-        "status": "new"
+        "status": "new",
+        "email": email,
+        "phone": phone
     }
     result = supabase.table("clients").insert(new_client).execute()
     return result.data[0]
@@ -190,45 +202,51 @@ async def cmd_start(message: Message, command: CommandObject):
         if result["success"]:
             # Авторизуем пользователя
             email = result["data"].get("email")
-            await authorize_user(telegram_id, username, email)
-            await get_or_create_client(message.from_user)
+            phone = result["data"].get("phone")
+            await authorize_user(telegram_id, username, email, phone)
+            await get_or_create_client(message.from_user, email, phone)
             
             await message.answer(
-                "✅ Оплата подтверждена!\n\n"
-                "Добро пожаловать в бот диагностики! 🎉\n\n"
-                "Здесь вы можете:\n"
-                "📸 Отправить фото для диагностики\n"
-                "💬 Задать вопросы эксперту\n"
-                "📄 Получить рекомендации\n\n"
-                "Просто напишите сообщение или отправьте фото, и эксперт вам ответит!"
+                "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
+                "Найближчим часом я зв'яжусь з вами, щоб узгодити дату та час діагностики.\n\n"
+                "А поки що, будь ласка:\n"
+                "📸 надішліть фото вашого обличчя\n"
+                "— спереду\n"
+                "— у профіль з правого боку\n"
+                "— у профіль з лівого боку\n\n"
+                "💬 та коротко напишіть, який запит вас зараз турбує і що саме хотіли б покращити.\n\n"
+                "Це допоможе мені краще підготуватись до нашої діагностики 🌿"
             )
             return
         else:
             await message.answer(
                 f"❌ {result['error']}\n\n"
-                "Если у вас возникли проблемы с доступом, напишите в поддержку."
+                "Якщо у вас виникли проблеми з доступом, напишіть в підтримку."
             )
             return
     
     # Обычная проверка авторизации
     if not await is_authorized(username, telegram_id):
         await message.answer(
-            "👋 Добро пожаловать!\n\n"
-            "К сожалению, у вас пока нет доступа к диагностике.\n\n"
-            "Для получения доступа оплатите диагностику на нашем сайте.\n"
-            "После оплаты вы получите ссылку для активации."
+            "👋 Вітаю!\n\n"
+            "На жаль, у вас поки немає доступу до діагностики.\n\n"
+            "Для отримання доступу оплатіть діагностику на нашому сайті.\n"
+            "Після оплати ви отримаєте посилання для активації."
         )
         return
     
     await get_or_create_client(message.from_user)
     
     await message.answer(
-        "👋 Добро пожаловать в бот диагностики!\n\n"
-        "Здесь вы можете:\n"
-        "📸 Отправить фото для диагностики\n"
-        "💬 Задать вопросы эксперту\n"
-        "📄 Получить рекомендации\n\n"
-        "Просто напишите сообщение или отправьте фото, и эксперт вам ответит!"
+        "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
+        "Найближчим часом я зв'яжусь з вами, щоб узгодити дату та час діагностики.\n\n"
+        "А поки що, будь ласка:\n"
+        "📸 надішліть фото вашого обличчя\n"
+        "— спереду\n"
+        "— у профіль з правого боку\n"
+        "— у профіль з лівого боку\n\n"
+        "💬 та коротко напишіть, який запит вас зараз турбує і що саме хотіли б покращити.\n\n"
+        "Це допоможе мені краще підготуватись до нашої діагностики 🌿"
     )
 
 
@@ -236,11 +254,11 @@ async def cmd_start(message: Message, command: CommandObject):
 async def cmd_help(message: Message):
     """Обработка команды /help"""
     await message.answer(
-        "📖 Как пользоваться ботом:\n\n"
-        "1. Отправьте фото для диагностики\n"
-        "2. Задайте вопрос текстом\n"
-        "3. Дождитесь ответа эксперта\n\n"
-        "Эксперт ответит вам в ближайшее время!"
+        "📖 Як користуватися ботом:\n\n"
+        "1. Надішліть фото для діагностики\n"
+        "2. Задайте питання текстом\n"
+        "3. Дочекайтесь відповіді експерта\n\n"
+        "Експерт відповість вам найближчим часом!"
     )
 
 
@@ -251,7 +269,7 @@ async def handle_photo(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -275,8 +293,6 @@ async def handle_photo(message: Message):
         file_name=file_name,
         telegram_file_id=photo.file_id
     )
-    
-    await message.answer("📸 Фото получено! Эксперт скоро его посмотрит и ответит вам.")
 
 
 @dp.message(F.video)
@@ -286,7 +302,7 @@ async def handle_video(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -307,8 +323,6 @@ async def handle_video(message: Message):
         file_name=file_name,
         telegram_file_id=video.file_id
     )
-    
-    await message.answer("🎬 Видео получено! Эксперт скоро посмотрит и ответит вам.")
 
 
 @dp.message(F.voice)
@@ -318,7 +332,7 @@ async def handle_voice(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -338,8 +352,6 @@ async def handle_voice(message: Message):
         file_name=file_name,
         telegram_file_id=voice.file_id
     )
-    
-    await message.answer("🎤 Голосовое сообщение получено! Эксперт скоро прослушает и ответит.")
 
 
 @dp.message(F.video_note)
@@ -349,7 +361,7 @@ async def handle_video_note(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -369,8 +381,6 @@ async def handle_video_note(message: Message):
         file_name=file_name,
         telegram_file_id=video_note.file_id
     )
-    
-    await message.answer("⭕ Видео-кружок получен! Эксперт скоро посмотрит и ответит.")
 
 
 @dp.message(F.document)
@@ -380,7 +390,7 @@ async def handle_document(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -401,8 +411,6 @@ async def handle_document(message: Message):
         file_name=document.file_name,
         telegram_file_id=document.file_id
     )
-    
-    await message.answer("📄 Документ получен! Эксперт скоро посмотрит и ответит.")
 
 
 @dp.message(F.text)
@@ -412,7 +420,7 @@ async def handle_text(message: Message):
     username = message.from_user.username
     
     if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
+        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -423,8 +431,6 @@ async def handle_text(message: Message):
         content_type="text",
         text_content=message.text
     )
-    
-    await message.answer("✉️ Сообщение получено! Эксперт скоро ответит вам.")
 
 
 async def send_expert_messages():
