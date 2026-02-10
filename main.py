@@ -2,14 +2,21 @@ import os
 import asyncio
 import logging
 import aiohttp
+import hashlib
+import hmac
+import secrets
 from datetime import datetime
 from dotenv import load_dotenv
 from io import BytesIO
+from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, BufferedInputFile
 from supabase import create_client, Client
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+import uvicorn
 
 load_dotenv()
 
@@ -21,6 +28,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+WFP_SECRET_KEY = os.getenv("WFP_SECRET_KEY", "")  # Секретный ключ WayForPay
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("Missing environment variables")
@@ -32,14 +40,84 @@ dp = Dispatcher()
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-async def is_authorized(username: str) -> bool:
-    """Проверка авторизации пользователя"""
-    if not username:
-        return False
+def generate_token():
+    """Генерация уникального токена"""
+    return f"pay_{secrets.token_urlsafe(16)}"
+
+
+async def verify_payment_token(token: str, telegram_id: int) -> dict:
+    """Проверка и активация токена оплаты"""
+    result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
+    
+    if not result.data:
+        return {"success": False, "error": "Код не найден"}
+    
+    token_data = result.data[0]
+    
+    if token_data["status"] == "used":
+        return {"success": False, "error": "Этот код уже был использован"}
+    
+    if token_data["status"] == "expired":
+        return {"success": False, "error": "Срок действия кода истёк"}
+    
+    # Проверяем срок действия
+    if token_data["expires_at"]:
+        expires_at = datetime.fromisoformat(token_data["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(expires_at.tzinfo) > expires_at:
+            supabase.table("payment_tokens").update({"status": "expired"}).eq("id", token_data["id"]).execute()
+            return {"success": False, "error": "Срок действия кода истёк"}
+    
+    # Активируем токен
+    supabase.table("payment_tokens").update({
+        "status": "used",
+        "used_by_telegram_id": telegram_id,
+        "used_at": datetime.utcnow().isoformat()
+    }).eq("id", token_data["id"]).execute()
+    
+    return {"success": True, "data": token_data}
+
+
+async def is_authorized_by_telegram_id(telegram_id: int) -> bool:
+    """Проверка авторизации по telegram_id"""
     result = supabase.table("authorized_users").select("id").eq(
-        "telegram_username", username.lower()
+        "telegram_id", telegram_id
     ).execute()
     return len(result.data) > 0
+
+
+async def is_authorized(username: str = None, telegram_id: int = None) -> bool:
+    """Проверка авторизации пользователя"""
+    # Сначала проверяем по telegram_id
+    if telegram_id:
+        result = supabase.table("authorized_users").select("id").eq(
+            "telegram_id", telegram_id
+        ).execute()
+        if len(result.data) > 0:
+            return True
+    
+    # Потом по username
+    if username:
+        result = supabase.table("authorized_users").select("id").eq(
+            "telegram_username", username.lower()
+        ).execute()
+        if len(result.data) > 0:
+            return True
+    
+    return False
+
+
+async def authorize_user(telegram_id: int, username: str = None, email: str = None):
+    """Добавить пользователя в авторизованные"""
+    # Проверяем, не авторизован ли уже
+    if await is_authorized(username, telegram_id):
+        return
+    
+    user_data = {
+        "telegram_id": telegram_id,
+        "telegram_username": username.lower() if username else None,
+        "email": email
+    }
+    supabase.table("authorized_users").insert(user_data).execute()
 
 
 async def get_or_create_client(user: types.User) -> dict:
@@ -99,15 +177,46 @@ async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
 
 
 @dp.message(CommandStart())
-async def cmd_start(message: Message):
-    """Обработка команды /start"""
+async def cmd_start(message: Message, command: CommandObject):
+    """Обработка команды /start с возможным токеном"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
+    # Проверяем, есть ли токен в команде (deep link)
+    if command.args and command.args.startswith("pay_"):
+        token = command.args
+        result = await verify_payment_token(token, telegram_id)
+        
+        if result["success"]:
+            # Авторизуем пользователя
+            email = result["data"].get("email")
+            await authorize_user(telegram_id, username, email)
+            await get_or_create_client(message.from_user)
+            
+            await message.answer(
+                "✅ Оплата подтверждена!\n\n"
+                "Добро пожаловать в бот диагностики! 🎉\n\n"
+                "Здесь вы можете:\n"
+                "📸 Отправить фото для диагностики\n"
+                "💬 Задать вопросы эксперту\n"
+                "📄 Получить рекомендации\n\n"
+                "Просто напишите сообщение или отправьте фото, и эксперт вам ответит!"
+            )
+            return
+        else:
+            await message.answer(
+                f"❌ {result['error']}\n\n"
+                "Если у вас возникли проблемы с доступом, напишите в поддержку."
+            )
+            return
+    
+    # Обычная проверка авторизации
+    if not await is_authorized(username, telegram_id):
         await message.answer(
             "👋 Добро пожаловать!\n\n"
             "К сожалению, у вас пока нет доступа к диагностике.\n\n"
-            "Если вы уже оплатили — напишите в поддержку, и мы добавим вас в систему."
+            "Для получения доступа оплатите диагностику на нашем сайте.\n"
+            "После оплаты вы получите ссылку для активации."
         )
         return
     
@@ -138,10 +247,11 @@ async def cmd_help(message: Message):
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     """Обработка фото"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -172,10 +282,11 @@ async def handle_photo(message: Message):
 @dp.message(F.video)
 async def handle_video(message: Message):
     """Обработка видео"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -203,10 +314,11 @@ async def handle_video(message: Message):
 @dp.message(F.voice)
 async def handle_voice(message: Message):
     """Обработка голосового сообщения"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -233,10 +345,11 @@ async def handle_voice(message: Message):
 @dp.message(F.video_note)
 async def handle_video_note(message: Message):
     """Обработка видео-кружочка"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -263,10 +376,11 @@ async def handle_video_note(message: Message):
 @dp.message(F.document)
 async def handle_document(message: Message):
     """Обработка документа"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -294,10 +408,11 @@ async def handle_document(message: Message):
 @dp.message(F.text)
 async def handle_text(message: Message):
     """Обработка текстового сообщения"""
+    telegram_id = message.from_user.id
     username = message.from_user.username
     
-    if not await is_authorized(username):
-        await message.answer("⛔ У вас нет доступа. Напишите /start для информации.")
+    if not await is_authorized(username, telegram_id):
+        await message.answer("⛔ У вас нет доступа. Оплатите диагностику на сайте для получения доступа.")
         return
     
     client = await get_or_create_client(message.from_user)
@@ -359,7 +474,6 @@ async def send_expert_messages():
                                     
                                     # Сохраняем временный файл
                                     import tempfile
-                                    import subprocess
                                     
                                     with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
                                         tmp_in.write(audio_data)
@@ -493,16 +607,142 @@ async def send_expert_messages():
         await asyncio.sleep(2)  # Проверяем каждые 2 секунды
 
 
-async def main():
-    """Главная функция"""
-    logger.info("Starting bot...")
-    
-    # Запускаем отправку сообщений от эксперта в фоне
+# ==================== FastAPI для Webhook ====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Запуск при старте
+    asyncio.create_task(dp.start_polling(bot))
     asyncio.create_task(send_expert_messages())
+    logger.info("Bot started!")
+    yield
+    # Остановка
+    logger.info("Bot stopped!")
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Diagnostic Bot API"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+
+@app.post("/webhook/wayforpay")
+async def wayforpay_webhook(request: Request):
+    """Webhook для WayForPay"""
+    try:
+        data = await request.json()
+        logger.info(f"WayForPay webhook received: {data}")
+        
+        # Проверяем статус транзакции
+        transaction_status = data.get("transactionStatus")
+        
+        if transaction_status == "Approved":
+            # Оплата успешна - создаём токен
+            order_id = data.get("orderReference")
+            amount = data.get("amount")
+            email = data.get("email", "")
+            phone = data.get("phone", "")
+            
+            # Генерируем уникальный токен
+            token = generate_token()
+            
+            # Сохраняем в базу
+            supabase.table("payment_tokens").insert({
+                "token": token,
+                "email": email,
+                "phone": phone,
+                "amount": amount,
+                "order_id": order_id,
+                "status": "unused"
+            }).execute()
+            
+            logger.info(f"Payment token created: {token} for order {order_id}")
+            
+            # Формируем ссылку на бота
+            bot_username = "testlid12bot"  # Замени на username твоего бота
+            bot_link = f"https://t.me/{bot_username}?start={token}"
+            
+            # WayForPay ожидает ответ в определённом формате
+            response_data = {
+                "orderReference": order_id,
+                "status": "accept",
+                "time": int(datetime.now().timestamp())
+            }
+            
+            # Можно также вернуть ссылку для редиректа
+            # Это нужно настроить на стороне WayForPay или твоего сайта
+            
+            return JSONResponse(content=response_data)
+        
+        else:
+            logger.warning(f"Payment not approved: {transaction_status}")
+            return JSONResponse(content={"status": "reject"})
+            
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/create-token")
+async def create_token_api(request: Request):
+    """API для создания токена вручную (для тестов или интеграции)"""
+    try:
+        data = await request.json()
+        
+        email = data.get("email", "")
+        phone = data.get("phone", "")
+        amount = data.get("amount", 0)
+        order_id = data.get("order_id", "")
+        
+        # Генерируем токен
+        token = generate_token()
+        
+        # Сохраняем в базу
+        supabase.table("payment_tokens").insert({
+            "token": token,
+            "email": email,
+            "phone": phone,
+            "amount": amount,
+            "order_id": order_id,
+            "status": "unused"
+        }).execute()
+        
+        bot_username = "testlid12bot"  # Замени на username твоего бота
+        bot_link = f"https://t.me/{bot_username}?start={token}"
+        
+        return {
+            "success": True,
+            "token": token,
+            "bot_link": bot_link
+        }
+        
+    except Exception as e:
+        logger.error(f"Create token error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/token/{token}")
+async def check_token(token: str):
+    """Проверка статуса токена"""
+    result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
     
-    # Запускаем бота
-    await dp.start_polling(bot)
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Token not found")
+    
+    token_data = result.data[0]
+    return {
+        "token": token,
+        "status": token_data["status"],
+        "created_at": token_data["created_at"],
+        "expires_at": token_data["expires_at"]
+    }
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
