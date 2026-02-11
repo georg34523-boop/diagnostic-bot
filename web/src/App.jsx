@@ -207,7 +207,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const handleAddReminderSubmit = () => { if (!reminderText || !reminderDate) return; onAddReminder(reminderText, reminderDate); setReminderText(''); setReminderDate(''); setShowReminder(false); };
 
   return (
-    <div className="flex-1 flex bg-slate-950 relative">
+    <div className="flex-1 flex bg-slate-950 relative min-w-0 overflow-hidden">
       <div className="flex-1 flex flex-col">
         <div className="p-3 md:p-4 bg-slate-900 border-b border-slate-700 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
@@ -223,10 +223,10 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
           </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-4 space-y-3 md:space-y-4">
           {messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] md:max-w-md rounded-2xl px-3 md:px-4 py-2 md:py-3 ${msg.direction === 'expert' ? 'bg-amber-500 text-black rounded-br-md' : 'bg-slate-800 text-white rounded-bl-md'}`}>
+              <div className={`max-w-[75%] md:max-w-md rounded-2xl px-3 md:px-4 py-2 md:py-3 ${msg.direction === 'expert' ? 'bg-amber-500 text-black rounded-br-md' : 'bg-slate-800 text-white rounded-bl-md'}`}>
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="Фото" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
                 {msg.content_type === 'video_note' && msg.file_url && <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
@@ -318,7 +318,8 @@ const Analytics = ({ analytics, unreadDialogs, onPeriodChange, period }) => {
   const periods = [{ value: 'all', label: 'Весь час' }, { value: 'today', label: 'Сьогодні' }, { value: 'week', label: 'Тиждень' }, { value: 'month', label: 'Місяць' }, { value: '3months', label: '3 місяці' }];
   if (!analytics) return null;
   return (
-    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+    <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 gap-4">
         <h2 className="text-xl md:text-2xl font-bold text-white">Аналітика</h2>
         <div className="flex gap-2 flex-wrap">{periods.map(p => (<button key={p.value} onClick={() => onPeriodChange(p.value)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>{p.label}</button>))}</div>
@@ -339,6 +340,7 @@ const Analytics = ({ analytics, unreadDialogs, onPeriodChange, period }) => {
           })}
         </div>
       </div>
+      </div>
     </div>
   );
 };
@@ -348,7 +350,8 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
   const [email, setEmail] = useState('');
   const handleAdd = () => { if (!username && !email) return; onAddUser({ telegram_username: username, email }); setUsername(''); setEmail(''); };
   return (
-    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+    <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20">
       <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Керування доступом</h2>
       <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
         <h3 className="text-lg font-medium text-white mb-4">Додати користувача</h3>
@@ -363,6 +366,7 @@ const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
           <tbody>{authorizedUsers.map((user) => (<tr key={user.id} className="border-t border-slate-700"><td className="p-4 text-white">@{user.telegram_username || '—'}</td><td className="p-4 text-slate-400">{user.email || '—'}</td><td className="p-4 text-slate-400">{formatFullDate(user.created_at)}</td><td className="p-4 text-right"><button onClick={() => onRemoveUser(user.id)} className="text-red-400 hover:text-red-300">Видалити</button></td></tr>))}</tbody>
         </table>
         {authorizedUsers.length === 0 && <div className="p-8 text-center text-slate-500">Немає авторизованих користувачів</div>}
+      </div>
       </div>
     </div>
   );
@@ -380,7 +384,8 @@ const Reminders = ({ reminders, onComplete, onGoToChat }) => {
     </div>
   );
   return (
-    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+    <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20">
       <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Нагадування</h2>
       <div className="flex gap-2 mb-6">
         <button onClick={() => setTab('now')} className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${tab === 'now' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>🔔 Зараз {activeNow.length > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${tab === 'now' ? 'bg-black/20' : 'bg-red-500 text-white'}`}>{activeNow.length}</span>}</button>
@@ -388,6 +393,7 @@ const Reminders = ({ reminders, onComplete, onGoToChat }) => {
       </div>
       {tab === 'now' && <div className="space-y-3">{activeNow.length > 0 ? activeNow.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={true} />) : <div className="text-center text-slate-500 py-12">Немає активних нагадувань</div>}</div>}
       {tab === 'scheduled' && <div className="space-y-3">{scheduled.length > 0 ? scheduled.map(r => <ReminderItem key={r.id} reminder={r} isUrgent={false} />) : <div className="text-center text-slate-500 py-12">Немає запланованих нагадувань</div>}</div>}
+      </div>
     </div>
   );
 };
@@ -397,7 +403,8 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   const [content, setContent] = useState('');
   const handleAdd = () => { if (!title || !content) return; onAddTemplate({ title, content }); setTitle(''); setContent(''); };
   return (
-    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+    <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-20">
       <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Шаблони повідомлень</h2>
       <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
         <h3 className="text-lg font-medium text-white mb-4">Додати шаблон</h3>
@@ -411,9 +418,11 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
         {templates.map(t => (<div key={t.id} className="bg-slate-900 rounded-xl p-4 border border-slate-700 flex justify-between items-start gap-4"><div className="flex-1"><div className="font-medium text-white mb-1">{t.title}</div><div className="text-slate-400 text-sm whitespace-pre-wrap">{t.content}</div></div><button onClick={() => onDeleteTemplate(t.id)} className="text-red-400 hover:text-red-300 text-sm">Видалити</button></div>))}
         {templates.length === 0 && <div className="text-center text-slate-500 py-12">Немає шаблонів</div>}
       </div>
+      </div>
     </div>
   );
 };
+
 
 const Broadcast = ({ clients, onSendBroadcast }) => {
   const [message, setMessage] = useState('');
@@ -763,10 +772,10 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-slate-950">
-      <nav className="bg-slate-900 border-b border-slate-700 px-3 md:px-6 py-2 md:py-3 flex items-center justify-between">
+    <div className="fixed inset-0 flex flex-col bg-slate-950">
+      <nav className="flex-shrink-0 bg-slate-900 border-b border-slate-700 px-3 md:px-6 py-2 md:py-3 flex items-center justify-between safe-area-top">
         <div className="flex items-center gap-2"><span className="text-xl md:text-2xl">💎</span><span className="text-lg md:text-xl font-bold text-white hidden sm:inline">Diagnostic CRM</span></div>
-        <div className="flex gap-1 md:gap-2">
+        <div className="flex gap-1 md:gap-2 overflow-x-auto">
           {[
             { id: 'chat', label: '💬', fullLabel: '💬 Чати', count: unreadDialogs },
             { id: 'broadcast', label: '📢', fullLabel: '📢 Розсилка' },
@@ -775,15 +784,15 @@ export default function App() {
             { id: 'analytics', label: '📊', fullLabel: '📊 Аналітика' },
             { id: 'access', label: '👥', fullLabel: '👥 Доступ' }
           ].map(tab => (
-            <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-1 md:gap-2 text-sm md:text-base ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'text-slate-300 hover:bg-slate-800'}`}>
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`flex-shrink-0 px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-1 md:gap-2 text-sm md:text-base ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'text-slate-300 hover:bg-slate-800'}`}>
               <span className="md:hidden">{tab.label}</span><span className="hidden md:inline">{tab.fullLabel}</span>
               {tab.count > 0 && <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20 text-black' : tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-amber-500 text-black'}`}>{tab.count}</span>}
             </button>
           ))}
         </div>
       </nav>
-      <div className="flex-1 flex overflow-hidden">
-        {activeTab === 'chat' && (<><div className={`${isMobile ? (showClientList ? 'w-full' : 'hidden') : 'w-80'}`}><ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} /></div><div className={`flex-1 ${isMobile && showClientList ? 'hidden' : 'flex'}`}><ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} /></div></>)}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {activeTab === 'chat' && (<><div className={`${isMobile ? (showClientList ? 'w-full' : 'hidden') : 'w-80'} flex-shrink-0`}><ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} /></div><div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}><ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} /></div></>)}
         {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} />}
         {activeTab === 'analytics' && <Analytics analytics={analytics} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
         {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
