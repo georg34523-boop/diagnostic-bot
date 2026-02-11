@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://jlwjocmcmrplvulqxnik.supabase.co';
@@ -162,11 +162,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     }
   };
 
-  const formatRecordingTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return mins + ':' + secs.toString().padStart(2, '0');
-  };
+  const formatRecordingTime = (seconds) => { const mins = Math.floor(seconds / 60); const secs = seconds % 60; return mins + ':' + secs.toString().padStart(2, '0'); };
 
   const startVideoRecording = async () => {
     try {
@@ -208,13 +204,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     }
   };
 
-  const handleAddReminderSubmit = () => {
-    if (!reminderText || !reminderDate) return;
-    onAddReminder(reminderText, reminderDate);
-    setReminderText('');
-    setReminderDate('');
-    setShowReminder(false);
-  };
+  const handleAddReminderSubmit = () => { if (!reminderText || !reminderDate) return; onAddReminder(reminderText, reminderDate); setReminderText(''); setReminderDate(''); setShowReminder(false); };
 
   return (
     <div className="flex-1 flex bg-slate-950 relative">
@@ -425,6 +415,86 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   );
 };
 
+const Broadcast = ({ clients, onSendBroadcast }) => {
+  const [message, setMessage] = useState('');
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const filteredClients = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
+  
+  const toggleStatus = (status) => {
+    setSelectedStatuses(prev => prev.includes(status) ? prev.filter(s => s !== status) : [...prev, status]);
+  };
+
+  const handleSend = async () => {
+    if (!message.trim() || filteredClients.length === 0) return;
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await onSendBroadcast(message, filteredClients.map(c => c.id));
+      setResult({ success: true, count: res.count });
+      setMessage('');
+    } catch (err) {
+      setResult({ success: false, error: err.message });
+    }
+    setSending(false);
+  };
+
+  return (
+    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+      <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">📢 Розсилка</h2>
+      
+      <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Оберіть отримувачів</h3>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={() => setSelectedStatuses([])} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${selectedStatuses.length === 0 ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+            Всі ({clients.length})
+          </button>
+          {Object.entries(STATUSES).map(([key, { label }]) => {
+            const count = clients.filter(c => c.status === key).length;
+            const isSelected = selectedStatuses.includes(key);
+            return (
+              <button key={key} onClick={() => toggleStatus(key)} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${isSelected ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                {label} ({count})
+              </button>
+            );
+          })}
+        </div>
+        <div className="bg-slate-800 rounded-lg p-3 mb-4">
+          <span className="text-slate-400 text-sm">Отримувачів: </span>
+          <span className="text-white font-bold">{filteredClients.length}</span>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Текст повідомлення</h3>
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Введіть текст розсилки..." rows={6}
+          className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none mb-4" />
+        
+        <button onClick={handleSend} disabled={sending || !message.trim() || filteredClients.length === 0}
+          className="w-full md:w-auto px-8 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-700 disabled:text-slate-500 text-black font-medium rounded-lg transition flex items-center justify-center gap-2">
+          {sending ? (
+            <><svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Надсилаю...</>
+          ) : (
+            <>📤 Надіслати розсилку</>
+          )}
+        </button>
+      </div>
+
+      {result && (
+        <div className={`rounded-xl p-4 border ${result.success ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
+          {result.success ? (
+            <div className="text-green-400">✅ Розсилку надіслано {result.count} клієнтам!</div>
+          ) : (
+            <div className="text-red-400">❌ Помилка: {result.error}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('chat');
   const [clients, setClients] = useState([]);
@@ -441,6 +511,10 @@ export default function App() {
   const [analyticsPeriod, setAnalyticsPeriod] = useState('all');
   const [unreadDialogs, setUnreadDialogs] = useState(0);
   const [activeRemindersCount, setActiveRemindersCount] = useState(0);
+  
+  const selectedClientRef = useRef(null);
+  
+  useEffect(() => { selectedClientRef.current = selectedClient; }, [selectedClient]);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -448,29 +522,78 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Початкове завантаження
+  useEffect(() => {
+    loadClients();
+    loadAuthorizedUsers();
+    loadReminders();
+    loadTemplates();
+  }, []);
+
+  // Real-time підписки - окремий useEffect
+  useEffect(() => {
+    console.log('Setting up real-time subscriptions...');
+    
+    const clientsSub = supabase
+      .channel('realtime-clients')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, (payload) => {
+        console.log('Clients change:', payload);
+        loadClients();
+      })
+      .subscribe((status) => {
+        console.log('Clients subscription status:', status);
+      });
+
+    const msgSub = supabase
+      .channel('realtime-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        console.log('New message:', payload);
+        const newMsg = payload.new;
+        
+        // Оновлюємо повідомлення в поточному чаті
+        if (selectedClientRef.current && newMsg.client_id === selectedClientRef.current.id) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        }
+        
+        // Оновлюємо останні повідомлення
+        setLastMessages(prev => ({ ...prev, [newMsg.client_id]: newMsg }));
+        
+        // Оновлюємо лічильники
+        loadUnreadCounts();
+        
+        // Оновлюємо порядок клієнтів
+        setClients(prev => {
+          const updated = prev.map(c => c.id === newMsg.client_id ? { ...c, updated_at: new Date().toISOString() } : c);
+          return updated.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+        });
+      })
+      .subscribe((status) => {
+        console.log('Messages subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up subscriptions...');
+      supabase.removeChannel(clientsSub);
+      supabase.removeChannel(msgSub);
+    };
+  }, []);
+
+  // Автооновлення нагадувань
   useEffect(() => {
     const interval = setInterval(() => loadReminders(), 60000);
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    loadClients(); loadAuthorizedUsers(); loadReminders(); loadTemplates();
-    const clientsSub = supabase.channel('clients-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => loadClients()).subscribe();
-    const msgSub = supabase.channel('messages-changes').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-      if (selectedClient && payload.new.client_id === selectedClient.id) setMessages(prev => [...prev, payload.new]);
-      setLastMessages(prev => ({ ...prev, [payload.new.client_id]: payload.new }));
-      loadUnreadCounts();
-      setClients(prev => {
-        const updated = prev.map(c => c.id === payload.new.client_id ? { ...c, updated_at: new Date().toISOString() } : c);
-        return updated.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-      });
-    }).subscribe();
-    return () => { supabase.removeChannel(clientsSub); supabase.removeChannel(msgSub); };
-  }, [selectedClient]);
-
   const loadClients = async () => {
     const { data } = await supabase.from('clients').select('*').order('updated_at', { ascending: false });
-    if (data) { setClients(data); computeAnalytics(data); loadLastMessages(data); }
+    if (data) { 
+      setClients(data); 
+      computeAnalyticsWithPeriod(data, analyticsPeriod); 
+      loadLastMessages(data); 
+    }
     loadUnreadCounts();
   };
 
@@ -500,9 +623,10 @@ export default function App() {
     loadUnreadCounts();
   };
 
-  const computeAnalytics = (clientsData) => computeAnalyticsWithPeriod(clientsData, analyticsPeriod);
-
-  const loadAuthorizedUsers = async () => { const { data } = await supabase.from('authorized_users').select('*').order('created_at', { ascending: false }); if (data) setAuthorizedUsers(data); };
+  const loadAuthorizedUsers = async () => { 
+    const { data } = await supabase.from('authorized_users').select('*').order('created_at', { ascending: false }); 
+    if (data) setAuthorizedUsers(data); 
+  };
 
   const loadReminders = async () => {
     const { data } = await supabase.from('reminders').select('*, clients(first_name, last_name)').eq('is_completed', false).order('remind_at');
@@ -518,7 +642,11 @@ export default function App() {
     if (data) setTemplates(data);
   };
 
-  const handleSelectClient = (client) => { setSelectedClient(client); loadMessages(client.id); if (isMobile) setShowClientList(false); };
+  const handleSelectClient = (client) => { 
+    setSelectedClient(client); 
+    loadMessages(client.id); 
+    if (isMobile) setShowClientList(false); 
+  };
 
   const handleSendMessage = async (text) => {
     if (!selectedClient) return;
@@ -551,23 +679,61 @@ export default function App() {
     loadClients();
   };
 
-  const handleNotesChange = async (notes) => { if (!selectedClient) return; await supabase.from('clients').update({ notes }).eq('id', selectedClient.id); setSelectedClient(prev => ({ ...prev, notes })); };
+  const handleNotesChange = async (notes) => { 
+    if (!selectedClient) return; 
+    await supabase.from('clients').update({ notes }).eq('id', selectedClient.id); 
+    setSelectedClient(prev => ({ ...prev, notes })); 
+  };
 
-  const handleAddReminder = async (text, date) => { if (!selectedClient) return; await supabase.from('reminders').insert({ client_id: selectedClient.id, reminder_text: text, remind_at: date }); loadReminders(); };
+  const handleAddReminder = async (text, date) => { 
+    if (!selectedClient) return; 
+    await supabase.from('reminders').insert({ client_id: selectedClient.id, reminder_text: text, remind_at: date }); 
+    loadReminders(); 
+  };
 
-  const handleCompleteReminder = async (id) => { await supabase.from('reminders').update({ is_completed: true }).eq('id', id); loadReminders(); };
-  const handleAddAuthorizedUser = async (userData) => { await supabase.from('authorized_users').insert({ ...userData, telegram_username: userData.telegram_username?.toLowerCase().replace('@', '') }); loadAuthorizedUsers(); };
-  const handleRemoveAuthorizedUser = async (id) => { await supabase.from('authorized_users').delete().eq('id', id); loadAuthorizedUsers(); };
+  const handleCompleteReminder = async (id) => { 
+    await supabase.from('reminders').update({ is_completed: true }).eq('id', id); 
+    loadReminders(); 
+  };
+  
+  const handleAddAuthorizedUser = async (userData) => { 
+    await supabase.from('authorized_users').insert({ ...userData, telegram_username: userData.telegram_username?.toLowerCase().replace('@', '') }); 
+    loadAuthorizedUsers(); 
+  };
+  
+  const handleRemoveAuthorizedUser = async (id) => { 
+    await supabase.from('authorized_users').delete().eq('id', id); 
+    loadAuthorizedUsers(); 
+  };
 
-  const handleAddTemplate = async (templateData) => { await supabase.from('message_templates').insert(templateData); loadTemplates(); };
-  const handleDeleteTemplate = async (id) => { await supabase.from('message_templates').delete().eq('id', id); loadTemplates(); };
+  const handleAddTemplate = async (templateData) => { 
+    await supabase.from('message_templates').insert(templateData); 
+    loadTemplates(); 
+  };
+  
+  const handleDeleteTemplate = async (id) => { 
+    await supabase.from('message_templates').delete().eq('id', id); 
+    loadTemplates(); 
+  };
 
   const handleGoToChat = (clientId) => {
     const client = clients.find(c => c.id === clientId);
     if (client) { setSelectedClient(client); loadMessages(client.id); setActiveTab('chat'); if (isMobile) setShowClientList(false); }
   };
 
-  const handlePeriodChange = (period) => { setAnalyticsPeriod(period); computeAnalyticsWithPeriod(clients, period); };
+  const handlePeriodChange = (period) => { 
+    setAnalyticsPeriod(period); 
+    computeAnalyticsWithPeriod(clients, period); 
+  };
+
+  const handleSendBroadcast = async (text, clientIds) => {
+    let count = 0;
+    for (const clientId of clientIds) {
+      await supabase.from('messages').insert({ client_id: clientId, direction: 'expert', content_type: 'text', text_content: text, is_read: false });
+      count++;
+    }
+    return { count };
+  };
 
   const computeAnalyticsWithPeriod = (clientsData, period) => {
     let filteredClients = clientsData;
@@ -596,7 +762,14 @@ export default function App() {
       <nav className="bg-slate-900 border-b border-slate-700 px-3 md:px-6 py-2 md:py-3 flex items-center justify-between">
         <div className="flex items-center gap-2"><span className="text-xl md:text-2xl">💎</span><span className="text-lg md:text-xl font-bold text-white hidden sm:inline">Diagnostic CRM</span></div>
         <div className="flex gap-1 md:gap-2">
-          {[{ id: 'chat', label: '💬', fullLabel: '💬 Чати', count: totalUnread }, { id: 'reminders', label: '🔔', fullLabel: '🔔 Нагадування', count: activeRemindersCount }, { id: 'templates', label: '📝', fullLabel: '📝 Шаблони' }, { id: 'analytics', label: '📊', fullLabel: '📊 Аналітика' }, { id: 'access', label: '👥', fullLabel: '👥 Доступ' }].map(tab => (
+          {[
+            { id: 'chat', label: '💬', fullLabel: '💬 Чати', count: totalUnread },
+            { id: 'broadcast', label: '📢', fullLabel: '📢 Розсилка' },
+            { id: 'reminders', label: '🔔', fullLabel: '🔔 Нагадування', count: activeRemindersCount },
+            { id: 'templates', label: '📝', fullLabel: '📝 Шаблони' },
+            { id: 'analytics', label: '📊', fullLabel: '📊 Аналітика' },
+            { id: 'access', label: '👥', fullLabel: '👥 Доступ' }
+          ].map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-1 md:gap-2 text-sm md:text-base ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'text-slate-300 hover:bg-slate-800'}`}>
               <span className="md:hidden">{tab.label}</span><span className="hidden md:inline">{tab.fullLabel}</span>
               {tab.count > 0 && <span className={`text-xs px-1.5 md:px-2 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20 text-black' : tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-amber-500 text-black'}`}>{tab.count}</span>}
@@ -606,6 +779,7 @@ export default function App() {
       </nav>
       <div className="flex-1 flex overflow-hidden">
         {activeTab === 'chat' && (<><div className={`${isMobile ? (showClientList ? 'w-full' : 'hidden') : 'w-80'}`}><ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} /></div><div className={`flex-1 ${isMobile && showClientList ? 'hidden' : 'flex'}`}><ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} /></div></>)}
+        {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} />}
         {activeTab === 'analytics' && <Analytics analytics={analytics} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
         {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
