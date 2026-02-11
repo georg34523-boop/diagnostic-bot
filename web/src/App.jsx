@@ -442,8 +442,25 @@ const Broadcast = ({ clients, onSendBroadcast }) => {
   };
 
   return (
-    <div className="p-4 md:p-6 bg-slate-950 min-h-screen overflow-auto">
+    <div className="flex-1 p-4 md:p-6 bg-slate-950 overflow-y-auto">
       <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">📢 Розсилка</h2>
+      
+      {/* Результат зверху */}
+      {result && (
+        <div className={`rounded-xl p-4 border mb-6 ${result.success ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
+          {result.success ? (
+            <div className="flex items-center justify-between">
+              <div className="text-green-400 text-lg">✅ Розсилку надіслано {result.count} клієнтам!</div>
+              <button onClick={() => setResult(null)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div className="text-red-400">❌ Помилка: {result.error}</div>
+              <button onClick={() => setResult(null)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+          )}
+        </div>
+      )}
       
       <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
         <h3 className="text-lg font-medium text-white mb-4">Оберіть отримувачів</h3>
@@ -461,15 +478,15 @@ const Broadcast = ({ clients, onSendBroadcast }) => {
             );
           })}
         </div>
-        <div className="bg-slate-800 rounded-lg p-3 mb-4">
+        <div className="bg-slate-800 rounded-lg p-3">
           <span className="text-slate-400 text-sm">Отримувачів: </span>
-          <span className="text-white font-bold">{filteredClients.length}</span>
+          <span className="text-white font-bold text-lg">{filteredClients.length}</span>
         </div>
       </div>
 
-      <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700 mb-6">
+      <div className="bg-slate-900 rounded-xl p-4 md:p-6 border border-slate-700">
         <h3 className="text-lg font-medium text-white mb-4">Текст повідомлення</h3>
-        <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Введіть текст розсилки..." rows={6}
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Введіть текст розсилки..." rows={5}
           className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 resize-none mb-4" />
         
         <button onClick={handleSend} disabled={sending || !message.trim() || filteredClients.length === 0}
@@ -481,16 +498,6 @@ const Broadcast = ({ clients, onSendBroadcast }) => {
           )}
         </button>
       </div>
-
-      {result && (
-        <div className={`rounded-xl p-4 border ${result.success ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
-          {result.success ? (
-            <div className="text-green-400">✅ Розсилку надіслано {result.count} клієнтам!</div>
-          ) : (
-            <div className="text-red-400">❌ Помилка: {result.error}</div>
-          )}
-        </div>
-      )}
     </div>
   );
 };
