@@ -279,37 +279,40 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         </div>
       </div>
       
-      <div className={`${isMobile ? 'absolute inset-y-0 right-0 z-10 transform transition-transform duration-300' : ''} ${isMobile && !showSidebar ? 'translate-x-full' : 'translate-x-0'} w-80 bg-slate-900 border-l border-slate-700 flex flex-col ${isMobile ? 'shadow-2xl' : 'hidden md:flex'}`}>
-        {isMobile && (<div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="font-medium text-white">Інформація</h3><button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>)}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div>
-            <h3 className="text-sm font-medium text-slate-400 mb-2">Інформація</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-400">Telegram:</span><span className="text-white">@{client.telegram_username || '—'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Телефон:</span><span className="text-white">{client.phone || '—'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Email:</span><span className="text-white">{client.email || '—'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Telegram ID:</span><span className="text-white">{client.telegram_id}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Додано:</span><span className="text-white">{formatFullDate(client.created_at)}</span></div>
+      {/* Sidebar - на мобільному показуємо тільки коли відкритий */}
+      {(!isMobile || showSidebar) && (
+        <div className={`${isMobile ? 'absolute inset-y-0 right-0 z-20 w-80 shadow-2xl' : 'w-80 hidden md:flex'} bg-slate-900 border-l border-slate-700 flex flex-col`}>
+          {isMobile && (<div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="font-medium text-white">Інформація</h3><button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-slate-800 rounded text-slate-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>)}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-medium text-slate-400 mb-2">Інформація</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-slate-400">Telegram:</span><span className="text-white">@{client.telegram_username || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Телефон:</span><span className="text-white">{client.phone || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Email:</span><span className="text-white">{client.email || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Telegram ID:</span><span className="text-white">{client.telegram_id}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Додано:</span><span className="text-white">{formatFullDate(client.created_at)}</span></div>
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-slate-400 mb-2">Нотатки</h3>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Додати нотатки..." rows={4} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm resize-none" />
+              <button onClick={() => onNotesChange(notes)} className="mt-2 w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">Зберегти нотатки</button>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2"><h3 className="text-sm font-medium text-slate-400">Нагадування</h3><button onClick={() => setShowReminder(!showReminder)} className="text-amber-500 text-sm hover:underline">+ Додати</button></div>
+              {showReminder && (
+                <div className="bg-slate-800 rounded-lg p-3 space-y-2">
+                  <input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст нагадування" className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm" />
+                  <input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-amber-500 text-sm" />
+                  <button onClick={handleAddReminderSubmit} className="w-full px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg text-sm transition">Додати</button>
+                </div>
+              )}
             </div>
           </div>
-          <div>
-            <h3 className="text-sm font-medium text-slate-400 mb-2">Нотатки</h3>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Додати нотатки..." rows={4} className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm resize-none" />
-            <button onClick={() => onNotesChange(notes)} className="mt-2 w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">Зберегти нотатки</button>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-2"><h3 className="text-sm font-medium text-slate-400">Нагадування</h3><button onClick={() => setShowReminder(!showReminder)} className="text-amber-500 text-sm hover:underline">+ Додати</button></div>
-            {showReminder && (
-              <div className="bg-slate-800 rounded-lg p-3 space-y-2">
-                <input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст нагадування" className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-amber-500 text-sm" />
-                <input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-amber-500 text-sm" />
-                <button onClick={handleAddReminderSubmit} className="w-full px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-lg text-sm transition">Додати</button>
-              </div>
-            )}
-          </div>
         </div>
-      </div>
-      {isMobile && showSidebar && <div className="absolute inset-0 bg-black/50 z-0" onClick={() => setShowSidebar(false)} />}
+      )}
+      {isMobile && showSidebar && <div className="absolute inset-0 bg-black/50 z-10" onClick={() => setShowSidebar(false)} />}
     </div>
   );
 };
