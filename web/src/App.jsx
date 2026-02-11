@@ -755,15 +755,13 @@ export default function App() {
     setAnalytics({ total_clients: total, status_counts: statusCounts, conversion_rates: { to_diagnostic: total > 0 ? Math.round((statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done) / total * 100) : 0, to_call: total > 0 ? Math.round(statusCounts.call_done / total * 100) : 0 } });
   };
 
-  const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
-
   return (
     <div className="h-screen flex flex-col bg-slate-950">
       <nav className="bg-slate-900 border-b border-slate-700 px-3 md:px-6 py-2 md:py-3 flex items-center justify-between">
         <div className="flex items-center gap-2"><span className="text-xl md:text-2xl">💎</span><span className="text-lg md:text-xl font-bold text-white hidden sm:inline">Diagnostic CRM</span></div>
         <div className="flex gap-1 md:gap-2">
           {[
-            { id: 'chat', label: '💬', fullLabel: '💬 Чати', count: totalUnread },
+            { id: 'chat', label: '💬', fullLabel: '💬 Чати', count: unreadDialogs },
             { id: 'broadcast', label: '📢', fullLabel: '📢 Розсилка' },
             { id: 'reminders', label: '🔔', fullLabel: '🔔 Нагадування', count: activeRemindersCount },
             { id: 'templates', label: '📝', fullLabel: '📝 Шаблони' },
