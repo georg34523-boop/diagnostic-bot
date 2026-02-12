@@ -208,7 +208,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
 
   return (
     <div className="flex-1 flex bg-slate-950 relative min-w-0 overflow-hidden">
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="p-3 md:p-4 bg-slate-900 border-b border-slate-700 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
             {isMobile && (<button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>)}
