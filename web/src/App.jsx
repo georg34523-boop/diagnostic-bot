@@ -388,30 +388,49 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const [welcomeMessage, setWelcomeMessage] = useState('');
   const [username, setUsername] = useState('');
 
+  const RAILWAY_API_URL = 'https://diagnostic-bot-production.up.railway.app';
+
   const handleRegisterBot = async () => {
     if (!botToken.trim()) { setBotError('Введіть токен бота'); return; }
     setBotLoading(true); setBotError(''); setBotSuccess('');
     try {
+      // 1. Перевіряємо токен через Telegram API
       const telegramResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
       const telegramData = await telegramResp.json();
-      if (!telegramData.ok) { setBotError('Невірний токен бота'); setBotLoading(false); return; }
+      if (!telegramData.ok) { setBotError('Невірний токен бота. Перевірте та спробуйте ще раз.'); setBotLoading(false); return; }
       
       const botUsername = telegramData.result.username;
       const botName = telegramData.result.first_name;
       
+      // 2. Перевіряємо чи бот вже існує
       const { data: existing } = await supabase.from('bots').select('id').eq('bot_token', botToken);
       if (existing?.length > 0) { setBotError('Цей бот вже зареєстрований'); setBotLoading(false); return; }
       
-      const { data, error } = await supabase.from('bots').insert({
-        bot_token: botToken, bot_username: botUsername, bot_name: botName,
-        expert_id: expertId, is_active: true, webhook_set: false,
-        welcome_message: 'Вітаю! Надішліть фото для діагностики 📸'
-      }).select();
+      // 3. Реєструємо бота через Railway API (це також додасть в базу і встановить webhook)
+      const registerResp = await fetch(`${RAILWAY_API_URL}/api/register-bot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_token: botToken, expert_id: expertId })
+      });
       
-      if (error) { setBotError('Помилка: ' + error.message); setBotLoading(false); return; }
-      setBotToken(''); setBotSuccess(`Бот @${botUsername} додано!`);
-      onBotAdded(data[0]);
-    } catch (err) { setBotError('Помилка: ' + err.message); }
+      const registerData = await registerResp.json();
+      
+      if (!registerResp.ok) {
+        setBotError(registerData.detail || 'Помилка реєстрації бота');
+        setBotLoading(false);
+        return;
+      }
+      
+      // 4. Отримуємо дані бота з бази
+      const { data: botData } = await supabase.from('bots').select('*').eq('id', registerData.bot_id).single();
+      
+      setBotToken('');
+      setBotSuccess(`✅ Бот @${botUsername} успішно додано і активовано!`);
+      onBotAdded(botData || { id: registerData.bot_id, bot_username: botUsername, bot_name: botName, expert_id: expertId, is_active: true, webhook_set: true });
+      
+    } catch (err) { 
+      setBotError('Помилка з\'єднання з сервером: ' + err.message); 
+    }
     setBotLoading(false);
   };
 
