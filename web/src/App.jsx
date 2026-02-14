@@ -144,17 +144,25 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, onC
     return c.first_name?.toLowerCase().includes(s) || c.last_name?.toLowerCase().includes(s) || c.telegram_username?.toLowerCase().includes(s);
   }).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
+  const filterLabels = {
+    all: 'Всі',
+    new: 'Нові',
+    diagnostic_scheduled: 'Запл. діагн.',
+    diagnostic_done: 'Пров. діагн.',
+    call_scheduled: 'Запл. дзвінок',
+    call_done: 'Пров. дзвінок'
+  };
+
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
       <div className="p-4 border-b border-zinc-800">
         <input type="text" placeholder="Пошук..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full px-4 py-2.5 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 transition text-sm" />
       </div>
       <div className="p-3 border-b border-zinc-800 flex flex-wrap gap-2">
-        <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === 'all' ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>Всі ({clients.length})</button>
+        <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === 'all' ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>{filterLabels.all} ({clients.length})</button>
         {Object.entries(STATUSES).map(([key, { label }]) => {
           const count = clients.filter(c => c.status === key).length;
-          if (count === 0) return null;
-          return (<button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === key ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>{count}</button>);
+          return (<button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === key ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>{filterLabels[key]} ({count})</button>);
         })}
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -841,29 +849,73 @@ const ExpertDashboard = ({ expert, onLogout, isAdminView = false, onBackToAdmin 
     { id: 'access', icon: '👥', label: 'Доступ' },
   ];
 
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+
   return (
     <div className="fixed inset-0 flex flex-col bg-black">
       <nav className="flex-shrink-0 bg-zinc-950 border-b border-zinc-800 px-4 md:px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {isAdminView && (
             <button onClick={onBackToAdmin} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
             </button>
           )}
           <Logo />
-          {isAdminView && <span className="text-zinc-500 text-sm hidden md:inline">/ {expert.name}</span>}
         </div>
-        <div className="flex gap-1 md:gap-2 overflow-x-auto">
+        
+        {/* Desktop Navigation */}
+        <div className="hidden md:flex gap-2">
           {tabs.map(tab => (
-            <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat' && isMobile) setShowClientList(true); }} className={`flex-shrink-0 px-3 md:px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 text-sm ${activeTab === tab.id ? 'bg-white text-black' : 'text-zinc-400 hover:bg-zinc-800'}`}>
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat') setShowClientList(true); }} className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 text-sm ${activeTab === tab.id ? 'bg-white text-black' : 'text-zinc-400 hover:bg-zinc-800'}`}>
               <span>{tab.icon}</span>
-              <span className="hidden md:inline">{tab.label}</span>
+              <span>{tab.label}</span>
               {tab.count > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === tab.id ? 'bg-black/20' : tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-black'}`}>{tab.count}</span>}
             </button>
           ))}
         </div>
+
+        {/* Mobile Navigation */}
+        <div className="flex md:hidden items-center gap-2">
+          {/* Active tab indicator */}
+          <button onClick={() => { setActiveTab('chat'); setShowClientList(true); }} className={`px-3 py-2 rounded-lg font-medium transition flex items-center gap-2 text-sm ${activeTab === 'chat' ? 'bg-white text-black' : 'text-zinc-400'}`}>
+            💬 {unreadDialogs > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500 text-black">{unreadDialogs}</span>}
+          </button>
+          {activeRemindersCount > 0 && (
+            <button onClick={() => setActiveTab('reminders')} className={`px-3 py-2 rounded-lg font-medium transition flex items-center gap-2 text-sm ${activeTab === 'reminders' ? 'bg-white text-black' : 'text-zinc-400'}`}>
+              🔔 <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-500 text-white">{activeRemindersCount}</span>
+            </button>
+          )}
+          {/* Three dots menu */}
+          <div className="relative">
+            <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+            </button>
+            {showMobileMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
+                <div className="absolute right-0 top-full mt-2 w-56 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                  {tabs.map(tab => (
+                    <button key={tab.id} onClick={() => { setActiveTab(tab.id); setShowMobileMenu(false); if (tab.id === 'chat') setShowClientList(true); }} className={`w-full px-4 py-3 text-left flex items-center justify-between transition ${activeTab === tab.id ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}>
+                      <span className="flex items-center gap-3"><span>{tab.icon}</span><span>{tab.label}</span></span>
+                      {tab.count > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${tab.id === 'reminders' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-black'}`}>{tab.count}</span>}
+                    </button>
+                  ))}
+                  <div className="border-t border-zinc-800" />
+                  {!isAdminView && (
+                    <button onClick={() => { onLogout(); setShowMobileMenu(false); }} className="w-full px-4 py-3 text-left flex items-center gap-3 text-red-400 hover:bg-zinc-800">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                      <span>Вийти</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Desktop logout */}
         {!isAdminView && (
-          <button onClick={onLogout} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 ml-2">
+          <button onClick={onLogout} className="hidden md:block p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           </button>
         )}
