@@ -13,6 +13,7 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, BufferedInputFile
 from supabase import create_client, Client
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -448,6 +449,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS для доступу з CRM
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # В продакшені краще вказати конкретні домени
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
 async def root():
@@ -491,6 +501,10 @@ async def register_bot_api(request: Request):
         if not bot_token or not expert_id:
             raise HTTPException(status_code=400, detail="bot_token and expert_id required")
         
+        # Перевіряємо чи бот вже активний в пам'яті
+        if bot_token in active_bots:
+            raise HTTPException(status_code=400, detail="Bot already active")
+        
         # Перевіряємо чи токен валідний
         try:
             test_bot = Bot(token=bot_token)
@@ -501,32 +515,42 @@ async def register_bot_api(request: Request):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid bot token: {e}")
         
-        # Перевіряємо чи бот вже існує
-        existing = supabase.table("bots").select("id").eq("bot_token", bot_token).execute()
+        # Перевіряємо чи бот вже існує в базі
+        existing = supabase.table("bots").select("id, is_active").eq("bot_token", bot_token).execute()
         if existing.data:
-            raise HTTPException(status_code=400, detail="Bot already registered")
+            if existing.data[0]["is_active"]:
+                raise HTTPException(status_code=400, detail="Bot already registered")
+            else:
+                # Реактивуємо бота
+                supabase.table("bots").update({"is_active": True, "webhook_set": False}).eq("id", existing.data[0]["id"]).execute()
+                bot_data = supabase.table("bots").select("*").eq("id", existing.data[0]["id"]).execute().data[0]
+        else:
+            # Додаємо в базу
+            new_bot = {
+                "bot_token": bot_token,
+                "bot_username": bot_username,
+                "bot_name": bot_name,
+                "expert_id": expert_id,
+                "is_active": True,
+                "webhook_set": False,
+                "welcome_message": "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\nНайближчим часом я зв'яжусь з вами.\n\n📸 Надішліть фото для діагностики."
+            }
+            result = supabase.table("bots").insert(new_bot).execute()
+            bot_data = result.data[0]
         
-        # Додаємо в базу
-        new_bot = {
-            "bot_token": bot_token,
-            "bot_username": bot_username,
-            "bot_name": bot_name,
-            "expert_id": expert_id,
-            "is_active": True,
-            "webhook_set": False
-        }
-        result = supabase.table("bots").insert(new_bot).execute()
-        bot_data = result.data[0]
+        # Ініціалізуємо бота (створюємо handlers і реєструємо webhook)
+        success = await initialize_bot(bot_data)
         
-        # Ініціалізуємо бота
-        await initialize_bot(bot_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to initialize bot")
         
         return {
             "success": True,
             "bot_id": bot_data["id"],
             "bot_username": bot_username,
             "bot_name": bot_name,
-            "message": f"Bot @{bot_username} registered successfully"
+            "webhook_set": True,
+            "message": f"Bot @{bot_username} registered and activated successfully"
         }
     except HTTPException:
         raise
