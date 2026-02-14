@@ -500,22 +500,198 @@ const Broadcast = ({ clients, onSendBroadcast }) => {
 };
 
 // ==================== ACCESS MANAGEMENT ====================
-const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser }) => {
+const AccessManagement = ({ authorizedUsers, onAddUser, onRemoveUser, expertId }) => {
   const [username, setUsername] = useState('');
-  const handleAdd = () => { if (!username) return; onAddUser({ telegram_username: username }); setUsername(''); };
+  const [activeSection, setActiveSection] = useState('users'); // users, bot
+  const [botToken, setBotToken] = useState('');
+  const [botInfo, setBotInfo] = useState(null);
+  const [botLoading, setBotLoading] = useState(false);
+  const [botError, setBotError] = useState('');
+  const [botSuccess, setBotSuccess] = useState('');
+
+  // Завантажуємо інформацію про бота експерта
+  useEffect(() => {
+    loadExpertBot();
+  }, [expertId]);
+
+  const loadExpertBot = async () => {
+    const { data } = await supabase.from('bots').select('*').eq('expert_id', expertId).eq('is_active', true);
+    if (data && data.length > 0) {
+      setBotInfo(data[0]);
+    }
+  };
+
+  const handleAddUser = () => { if (!username) return; onAddUser({ telegram_username: username }); setUsername(''); };
+
+  const handleRegisterBot = async () => {
+    if (!botToken.trim()) {
+      setBotError('Введіть токен бота');
+      return;
+    }
+
+    setBotLoading(true);
+    setBotError('');
+    setBotSuccess('');
+
+    try {
+      // Спочатку перевіряємо токен через Telegram API
+      const telegramResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+      const telegramData = await telegramResp.json();
+
+      if (!telegramData.ok) {
+        setBotError('Невірний токен бота. Перевірте та спробуйте ще раз.');
+        setBotLoading(false);
+        return;
+      }
+
+      const botUsername = telegramData.result.username;
+      const botName = telegramData.result.first_name;
+
+      // Перевіряємо чи бот вже існує
+      const { data: existing } = await supabase.from('bots').select('id').eq('bot_token', botToken);
+      if (existing && existing.length > 0) {
+        setBotError('Цей бот вже зареєстрований');
+        setBotLoading(false);
+        return;
+      }
+
+      // Додаємо в базу
+      const { data, error } = await supabase.from('bots').insert({
+        bot_token: botToken,
+        bot_username: botUsername,
+        bot_name: botName,
+        expert_id: expertId,
+        is_active: true,
+        webhook_set: false
+      }).select();
+
+      if (error) {
+        setBotError('Помилка збереження: ' + error.message);
+        setBotLoading(false);
+        return;
+      }
+
+      setBotInfo(data[0]);
+      setBotToken('');
+      setBotSuccess(`Бот @${botUsername} успішно додано! Webhook буде налаштовано автоматично при перезапуску сервера.`);
+
+    } catch (err) {
+      setBotError('Помилка: ' + err.message);
+    }
+
+    setBotLoading(false);
+  };
+
+  const handleDeleteBot = async () => {
+    if (!botInfo) return;
+    if (!confirm('Ви впевнені що хочете видалити бота?')) return;
+
+    await supabase.from('bots').update({ is_active: false }).eq('id', botInfo.id);
+    setBotInfo(null);
+    setBotSuccess('Бот видалено');
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-black p-6">
-      <h2 className="text-2xl font-bold text-white mb-6">Доступ до бота</h2>
-      <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
-        <div className="flex gap-4">
-          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="@username" className="flex-1 px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
-          <button onClick={handleAdd} className="px-6 py-3 bg-white text-black font-medium rounded-xl">Додати</button>
-        </div>
+      <h2 className="text-2xl font-bold text-white mb-6">Налаштування</h2>
+      
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setActiveSection('users')} className={`px-4 py-2 rounded-lg font-medium transition ${activeSection === 'users' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+          👥 Авторизовані
+        </button>
+        <button onClick={() => setActiveSection('bot')} className={`px-4 py-2 rounded-lg font-medium transition ${activeSection === 'bot' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+          🤖 Мій бот
+        </button>
       </div>
-      <div className="space-y-3">
-        {authorizedUsers.map(u => (<div key={u.id} className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 flex justify-between items-center"><span className="text-white">@{u.telegram_username}</span><button onClick={() => onRemoveUser(u.id)} className="text-red-400">Видалити</button></div>))}
-        {authorizedUsers.length === 0 && <div className="text-center text-zinc-600 py-12">Немає користувачів</div>}
-      </div>
+
+      {activeSection === 'users' && (
+        <>
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
+            <div className="flex gap-4">
+              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="@username" className="flex-1 px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+              <button onClick={handleAddUser} className="px-6 py-3 bg-white text-black font-medium rounded-xl">Додати</button>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {authorizedUsers.map(u => (<div key={u.id} className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 flex justify-between items-center"><span className="text-white">@{u.telegram_username}</span><button onClick={() => onRemoveUser(u.id)} className="text-red-400">Видалити</button></div>))}
+            {authorizedUsers.length === 0 && <div className="text-center text-zinc-600 py-12">Немає користувачів</div>}
+          </div>
+        </>
+      )}
+
+      {activeSection === 'bot' && (
+        <>
+          {botInfo ? (
+            <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-3xl">🤖</div>
+                <div>
+                  <div className="text-xl font-bold text-white">@{botInfo.bot_username}</div>
+                  <div className="text-zinc-400">{botInfo.bot_name}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`w-2 h-2 rounded-full ${botInfo.webhook_set ? 'bg-emerald-500' : 'bg-yellow-500'}`}></span>
+                    <span className="text-xs text-zinc-500">{botInfo.webhook_set ? 'Webhook активний' : 'Очікує налаштування'}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-black rounded-xl p-4 mb-4">
+                <div className="text-zinc-500 text-sm mb-1">Посилання на бота</div>
+                <a href={`https://t.me/${botInfo.bot_username}`} target="_blank" className="text-emerald-400 hover:underline">t.me/{botInfo.bot_username}</a>
+              </div>
+
+              <button onClick={handleDeleteBot} className="px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl hover:bg-red-500/20 transition">
+                Видалити бота
+              </button>
+            </div>
+          ) : (
+            <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+              <h3 className="text-lg font-medium text-white mb-4">Додати Telegram бота</h3>
+              
+              <div className="bg-zinc-800/50 rounded-xl p-4 mb-6">
+                <h4 className="font-medium text-white mb-2">📝 Інструкція:</h4>
+                <ol className="text-zinc-400 text-sm space-y-2">
+                  <li>1. Відкрийте <a href="https://t.me/BotFather" target="_blank" className="text-emerald-400 hover:underline">@BotFather</a> в Telegram</li>
+                  <li>2. Надішліть команду <code className="bg-zinc-700 px-1 rounded">/newbot</code></li>
+                  <li>3. Введіть назву бота (наприклад: "Діагностика Олени")</li>
+                  <li>4. Введіть username бота (наприклад: "olena_diagnostic_bot")</li>
+                  <li>5. Скопіюйте токен і вставте нижче</li>
+                </ol>
+              </div>
+
+              {botError && (
+                <div className="mb-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+                  {botError}
+                </div>
+              )}
+
+              {botSuccess && (
+                <div className="mb-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-sm">
+                  {botSuccess}
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <input
+                  type="text"
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  placeholder="Вставте токен бота (напр: 123456789:ABCdefGHI...)"
+                  className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 font-mono text-sm"
+                />
+                <button
+                  onClick={handleRegisterBot}
+                  disabled={botLoading || !botToken.trim()}
+                  className="w-full py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-semibold rounded-xl transition"
+                >
+                  {botLoading ? 'Перевіряю...' : 'Додати бота'}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
@@ -972,7 +1148,7 @@ const ExpertDashboard = ({ expert, onLogout, isAdminView = false, onBackToAdmin 
         )}
         {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} />}
         {activeTab === 'analytics' && <Analytics analytics={analytics} unreadDialogs={unreadDialogs} onPeriodChange={handlePeriodChange} period={analyticsPeriod} />}
-        {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
+        {activeTab === 'access' && <AccessManagement authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} expertId={expertId} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
         {activeTab === 'templates' && <Templates templates={templates} onAddTemplate={handleAddTemplate} onDeleteTemplate={handleDeleteTemplate} />}
       </div>
