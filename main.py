@@ -2,13 +2,11 @@ import os
 import asyncio
 import logging
 import aiohttp
-import hashlib
-import hmac
 import secrets
 from datetime import datetime
 from dotenv import load_dotenv
-from io import BytesIO
 from contextlib import asynccontextmanager
+from typing import Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command, CommandObject
@@ -24,50 +22,79 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация бота
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-WFP_SECRET_KEY = os.getenv("WFP_SECRET_KEY", "")  # Секретный ключ WayForPay
+RAILWAY_URL = os.getenv("RAILWAY_URL", "")  # URL Railway для webhook
 
-if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Missing environment variables")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-# Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Зберігаємо активні боти: {bot_token: {"bot": Bot, "dp": Dispatcher, "bot_id": uuid, "expert_id": uuid}}
+active_bots: Dict[str, dict] = {}
+
+
+# ==================== HELPER FUNCTIONS ====================
 
 def generate_token():
-    """Генерация уникального токена"""
+    """Генерація унікального токена"""
     return f"pay_{secrets.token_urlsafe(16)}"
 
 
-async def verify_payment_token(token: str, telegram_id: int) -> dict:
-    """Проверка и активация токена оплаты"""
+async def get_bot_by_token(bot_token: str) -> dict:
+    """Отримати бота з бази по токену"""
+    result = supabase.table("bots").select("*").eq("bot_token", bot_token).eq("is_active", True).execute()
+    if result.data:
+        return result.data[0]
+    return None
+
+
+async def load_all_bots():
+    """Завантажити всі активні боти з бази"""
+    result = supabase.table("bots").select("*").eq("is_active", True).execute()
+    return result.data or []
+
+
+async def register_webhook(bot: Bot, bot_token: str):
+    """Зареєструвати webhook для бота"""
+    if not RAILWAY_URL:
+        logger.warning("RAILWAY_URL not set, skipping webhook registration")
+        return False
+    
+    webhook_url = f"{RAILWAY_URL}/webhook/telegram/{bot_token}"
+    try:
+        await bot.set_webhook(webhook_url)
+        logger.info(f"Webhook set for bot: {webhook_url}")
+        supabase.table("bots").update({"webhook_set": True}).eq("bot_token", bot_token).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {e}")
+        return False
+
+
+async def verify_payment_token(token: str, telegram_id: int, expert_id: str) -> dict:
+    """Перевірка і активація токена оплати"""
     result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
     
     if not result.data:
-        return {"success": False, "error": "Код не найден"}
+        return {"success": False, "error": "Код не знайдено"}
     
     token_data = result.data[0]
     
     if token_data["status"] == "used":
-        return {"success": False, "error": "Этот код уже был использован"}
+        return {"success": False, "error": "Цей код вже був використаний"}
     
     if token_data["status"] == "expired":
-        return {"success": False, "error": "Срок действия кода истёк"}
+        return {"success": False, "error": "Термін дії коду закінчився"}
     
-    # Проверяем срок действия
-    if token_data["expires_at"]:
+    if token_data.get("expires_at"):
         expires_at = datetime.fromisoformat(token_data["expires_at"].replace("Z", "+00:00"))
         if datetime.now(expires_at.tzinfo) > expires_at:
             supabase.table("payment_tokens").update({"status": "expired"}).eq("id", token_data["id"]).execute()
-            return {"success": False, "error": "Срок действия кода истёк"}
+            return {"success": False, "error": "Термін дії коду закінчився"}
     
-    # Активируем токен
     supabase.table("payment_tokens").update({
         "status": "used",
         "used_by_telegram_id": telegram_id,
@@ -77,58 +104,47 @@ async def verify_payment_token(token: str, telegram_id: int) -> dict:
     return {"success": True, "data": token_data}
 
 
-async def is_authorized_by_telegram_id(telegram_id: int) -> bool:
-    """Проверка авторизации по telegram_id"""
-    result = supabase.table("authorized_users").select("id").eq(
-        "telegram_id", telegram_id
-    ).execute()
-    return len(result.data) > 0
-
-
-async def is_authorized(username: str = None, telegram_id: int = None) -> bool:
-    """Проверка авторизации пользователя"""
-    # Сначала проверяем по telegram_id
+async def is_authorized(username: str, telegram_id: int, expert_id: str) -> bool:
+    """Перевірка авторизації користувача для конкретного експерта"""
     if telegram_id:
         result = supabase.table("authorized_users").select("id").eq(
             "telegram_id", telegram_id
-        ).execute()
-        if len(result.data) > 0:
+        ).eq("expert_id", expert_id).execute()
+        if result.data:
             return True
     
-    # Потом по username
     if username:
         result = supabase.table("authorized_users").select("id").eq(
             "telegram_username", username.lower()
-        ).execute()
-        if len(result.data) > 0:
+        ).eq("expert_id", expert_id).execute()
+        if result.data:
             return True
     
     return False
 
 
-async def authorize_user(telegram_id: int, username: str = None, email: str = None, phone: str = None):
-    """Добавить пользователя в авторизованные"""
-    # Проверяем, не авторизован ли уже
-    if await is_authorized(username, telegram_id):
+async def authorize_user(telegram_id: int, expert_id: str, username: str = None, email: str = None, phone: str = None):
+    """Додати користувача до авторизованих"""
+    if await is_authorized(username, telegram_id, expert_id):
         return
     
     user_data = {
         "telegram_id": telegram_id,
         "telegram_username": username.lower() if username else None,
         "email": email,
-        "phone": phone
+        "phone": phone,
+        "expert_id": expert_id
     }
     supabase.table("authorized_users").insert(user_data).execute()
 
 
-async def get_or_create_client(user: types.User, email: str = None, phone: str = None) -> dict:
-    """Получить или создать клиента"""
+async def get_or_create_client(user: types.User, expert_id: str, email: str = None, phone: str = None) -> dict:
+    """Отримати або створити клієнта для конкретного експерта"""
     result = supabase.table("clients").select("*").eq(
         "telegram_id", user.id
-    ).execute()
+    ).eq("expert_id", expert_id).execute()
     
     if result.data:
-        # Оновлюємо email і phone якщо є
         if email or phone:
             update_data = {}
             if email:
@@ -136,7 +152,7 @@ async def get_or_create_client(user: types.User, email: str = None, phone: str =
             if phone:
                 update_data["phone"] = phone
             if update_data:
-                supabase.table("clients").update(update_data).eq("telegram_id", user.id).execute()
+                supabase.table("clients").update(update_data).eq("telegram_id", user.id).eq("expert_id", expert_id).execute()
         return result.data[0]
     
     new_client = {
@@ -146,7 +162,8 @@ async def get_or_create_client(user: types.User, email: str = None, phone: str =
         "last_name": user.last_name,
         "status": "new",
         "email": email,
-        "phone": phone
+        "phone": phone,
+        "expert_id": expert_id
     }
     result = supabase.table("clients").insert(new_client).execute()
     return result.data[0]
@@ -155,7 +172,7 @@ async def get_or_create_client(user: types.User, email: str = None, phone: str =
 async def save_message(client_id: str, direction: str, content_type: str, 
                        text_content: str = None, file_url: str = None,
                        file_name: str = None, telegram_file_id: str = None):
-    """Сохранить сообщение в базу"""
+    """Зберегти повідомлення в базу"""
     message_data = {
         "client_id": client_id,
         "direction": direction,
@@ -167,20 +184,14 @@ async def save_message(client_id: str, direction: str, content_type: str,
         "is_read": direction == "expert"
     }
     supabase.table("messages").insert(message_data).execute()
-    
-    # Обновляем время последнего сообщения клиента
-    supabase.table("clients").update(
-        {"updated_at": datetime.utcnow().isoformat()}
-    ).eq("id", client_id).execute()
+    supabase.table("clients").update({"updated_at": datetime.utcnow().isoformat()}).eq("id", client_id).execute()
 
 
 async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
-    """Загрузить файл в Supabase Storage"""
+    """Завантажити файл в Supabase Storage"""
     try:
         file_path = f"uploads/{file_name}"
-        supabase.storage.from_("diagnostic-files").upload(
-            file_path, file_bytes, {"content-type": "application/octet-stream"}
-        )
+        supabase.storage.from_("diagnostic-files").upload(file_path, file_bytes, {"content-type": "application/octet-stream"})
         public_url = supabase.storage.from_("diagnostic-files").get_public_url(file_path)
         return public_url
     except Exception as e:
@@ -188,528 +199,391 @@ async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
         return None
 
 
-@dp.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject):
-    """Обработка команды /start с возможным токеном"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
+# ==================== BOT HANDLERS FACTORY ====================
+
+def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str, welcome_message: str):
+    """Створити обробники для конкретного бота"""
     
-    # Проверяем, есть ли токен в команде (deep link)
-    if command.args and command.args.startswith("pay_"):
-        token = command.args
-        result = await verify_payment_token(token, telegram_id)
+    @dp.message(CommandStart())
+    async def cmd_start(message: Message, command: CommandObject):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
         
-        if result["success"]:
-            # Авторизуем пользователя
-            email = result["data"].get("email")
-            phone = result["data"].get("phone")
-            await authorize_user(telegram_id, username, email, phone)
-            await get_or_create_client(message.from_user, email, phone)
+        if command.args and command.args.startswith("pay_"):
+            token = command.args
+            result = await verify_payment_token(token, telegram_id, expert_id)
             
+            if result["success"]:
+                email = result["data"].get("email")
+                phone = result["data"].get("phone")
+                await authorize_user(telegram_id, expert_id, username, email, phone)
+                await get_or_create_client(message.from_user, expert_id, email, phone)
+                
+                await message.answer(welcome_message or 
+                    "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
+                    "Найближчим часом я зв'яжусь з вами.\n\n"
+                    "📸 Надішліть фото для діагностики."
+                )
+                return
+            else:
+                await message.answer(f"❌ {result['error']}\n\nЯкщо виникли проблеми, напишіть в підтримку.")
+                return
+        
+        if not await is_authorized(username, telegram_id, expert_id):
             await message.answer(
-                "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
-                "Найближчим часом я зв'яжусь з вами, щоб узгодити дату та час діагностики.\n\n"
-                "А поки що, будь ласка:\n"
-                "📸 надішліть фото вашого обличчя\n"
-                "— спереду\n"
-                "— у профіль з правого боку\n"
-                "— у профіль з лівого боку\n\n"
-                "💬 та коротко напишіть, який запит вас зараз турбує і що саме хотіли б покращити.\n\n"
-                "Це допоможе мені краще підготуватись до нашої діагностики 🌿"
+                "👋 Вітаю!\n\n"
+                "На жаль, у вас поки немає доступу.\n\n"
+                "Для отримання доступу оплатіть діагностику на сайті."
             )
             return
-        else:
-            await message.answer(
-                f"❌ {result['error']}\n\n"
-                "Якщо у вас виникли проблеми з доступом, напишіть в підтримку."
-            )
+        
+        await get_or_create_client(message.from_user, expert_id)
+        await message.answer(welcome_message or "👋 Вітаю! Надішліть фото для діагностики 📸")
+
+    @dp.message(Command("help"))
+    async def cmd_help(message: Message):
+        await message.answer("📖 Як користуватися ботом:\n\n1. Надішліть фото для діагностики\n2. Задайте питання текстом\n3. Дочекайтесь відповіді експерта")
+
+    @dp.message(F.photo)
+    async def handle_photo(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
             return
-    
-    # Обычная проверка авторизации
-    if not await is_authorized(username, telegram_id):
-        await message.answer(
-            "👋 Вітаю!\n\n"
-            "На жаль, у вас поки немає доступу до діагностики.\n\n"
-            "Для отримання доступу оплатіть діагностику на нашому сайті.\n"
-            "Після оплати ви отримаєте посилання для активації."
-        )
-        return
-    
-    await get_or_create_client(message.from_user)
-    
-    await message.answer(
-        "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
-        "Найближчим часом я зв'яжусь з вами, щоб узгодити дату та час діагностики.\n\n"
-        "А поки що, будь ласка:\n"
-        "📸 надішліть фото вашого обличчя\n"
-        "— спереду\n"
-        "— у профіль з правого боку\n"
-        "— у профіль з лівого боку\n\n"
-        "💬 та коротко напишіть, який запит вас зараз турбує і що саме хотіли б покращити.\n\n"
-        "Це допоможе мені краще підготуватись до нашої діагностики 🌿"
-    )
+        client = await get_or_create_client(message.from_user, expert_id)
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id)
+
+    @dp.message(F.video)
+    async def handle_video(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
+            return
+        client = await get_or_create_client(message.from_user, expert_id)
+        video = message.video
+        file = await bot.get_file(video.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        await save_message(client_id=client["id"], direction="client", content_type="video", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=video.file_id)
+
+    @dp.message(F.voice)
+    async def handle_voice(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
+            return
+        client = await get_or_create_client(message.from_user, expert_id)
+        voice = message.voice
+        file = await bot.get_file(voice.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
+        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        await save_message(client_id=client["id"], direction="client", content_type="voice", file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id)
+
+    @dp.message(F.video_note)
+    async def handle_video_note(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
+            return
+        client = await get_or_create_client(message.from_user, expert_id)
+        video_note = message.video_note
+        file = await bot.get_file(video_note.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
+        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        await save_message(client_id=client["id"], direction="client", content_type="video_note", file_url=file_url, file_name=file_name, telegram_file_id=video_note.file_id)
+
+    @dp.message(F.document)
+    async def handle_document(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
+            return
+        client = await get_or_create_client(message.from_user, expert_id)
+        document = message.document
+        file = await bot.get_file(document.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
+        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        await save_message(client_id=client["id"], direction="client", content_type="document", text_content=message.caption, file_url=file_url, file_name=document.file_name, telegram_file_id=document.file_id)
+
+    @dp.message(F.text)
+    async def handle_text(message: Message):
+        telegram_id = message.from_user.id
+        username = message.from_user.username
+        if not await is_authorized(username, telegram_id, expert_id):
+            await message.answer("⛔ У вас немає доступу.")
+            return
+        client = await get_or_create_client(message.from_user, expert_id)
+        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text)
 
 
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    """Обработка команды /help"""
-    await message.answer(
-        "📖 Як користуватися ботом:\n\n"
-        "1. Надішліть фото для діагностики\n"
-        "2. Задайте питання текстом\n"
-        "3. Дочекайтесь відповіді експерта\n\n"
-        "Експерт відповість вам найближчим часом!"
-    )
+async def initialize_bot(bot_data: dict) -> bool:
+    """Ініціалізувати одного бота"""
+    bot_token = bot_data["bot_token"]
+    expert_id = bot_data["expert_id"]
+    welcome_message = bot_data.get("welcome_message", "")
+    
+    if bot_token in active_bots:
+        logger.info(f"Bot {bot_token[:20]}... already active")
+        return True
+    
+    try:
+        bot = Bot(token=bot_token)
+        dp = Dispatcher()
+        create_bot_handlers(bot, dp, bot_token, expert_id, welcome_message)
+        await register_webhook(bot, bot_token)
+        
+        active_bots[bot_token] = {
+            "bot": bot,
+            "dp": dp,
+            "bot_id": bot_data["id"],
+            "expert_id": expert_id
+        }
+        
+        logger.info(f"Bot initialized: {bot_data.get('bot_username', 'unknown')}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize bot: {e}")
+        return False
 
 
-@dp.message(F.photo)
-async def handle_photo(message: Message):
-    """Обработка фото"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    # Получаем файл
-    photo = message.photo[-1]  # Берём самое большое фото
-    file = await bot.get_file(photo.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    
-    # Загружаем в Storage
-    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-    
-    # Сохраняем сообщение
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="photo",
-        text_content=message.caption,
-        file_url=file_url,
-        file_name=file_name,
-        telegram_file_id=photo.file_id
-    )
+async def initialize_all_bots():
+    """Ініціалізувати всі боти з бази"""
+    bots = await load_all_bots()
+    logger.info(f"Found {len(bots)} active bots")
+    for bot_data in bots:
+        await initialize_bot(bot_data)
 
 
-@dp.message(F.video)
-async def handle_video(message: Message):
-    """Обработка видео"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    video = message.video
-    file = await bot.get_file(video.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    
-    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-    
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="video",
-        text_content=message.caption,
-        file_url=file_url,
-        file_name=file_name,
-        telegram_file_id=video.file_id
-    )
-
-
-@dp.message(F.voice)
-async def handle_voice(message: Message):
-    """Обработка голосового сообщения"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    voice = message.voice
-    file = await bot.get_file(voice.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    
-    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
-    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-    
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="voice",
-        file_url=file_url,
-        file_name=file_name,
-        telegram_file_id=voice.file_id
-    )
-
-
-@dp.message(F.video_note)
-async def handle_video_note(message: Message):
-    """Обработка видео-кружочка"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    video_note = message.video_note
-    file = await bot.get_file(video_note.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    
-    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
-    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-    
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="video_note",
-        file_url=file_url,
-        file_name=file_name,
-        telegram_file_id=video_note.file_id
-    )
-
-
-@dp.message(F.document)
-async def handle_document(message: Message):
-    """Обработка документа"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    document = message.document
-    file = await bot.get_file(document.file_id)
-    file_bytes = await bot.download_file(file.file_path)
-    
-    file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
-    file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-    
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="document",
-        text_content=message.caption,
-        file_url=file_url,
-        file_name=document.file_name,
-        telegram_file_id=document.file_id
-    )
-
-
-@dp.message(F.text)
-async def handle_text(message: Message):
-    """Обработка текстового сообщения"""
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    if not await is_authorized(username, telegram_id):
-        await message.answer("⛔ У вас немає доступу. Оплатіть діагностику на сайті для отримання доступу.")
-        return
-    
-    client = await get_or_create_client(message.from_user)
-    
-    await save_message(
-        client_id=client["id"],
-        direction="client",
-        content_type="text",
-        text_content=message.text
-    )
-
+# ==================== SEND EXPERT MESSAGES ====================
 
 async def send_expert_messages():
-    """Отправка сообщений от эксперта клиентам"""
+    """Відправка повідомлень від експертів клієнтам"""
     processed_ids = set()
     
     while True:
         try:
-            # Получаем непрочитанные сообщения от эксперта
-            result = supabase.table("messages").select(
-                "*, clients(telegram_id)"
-            ).eq("direction", "expert").eq("is_read", False).execute()
+            result = supabase.table("messages").select("*, clients(telegram_id, expert_id)").eq("direction", "expert").eq("is_read", False).execute()
             
             for msg in result.data:
                 if msg["id"] in processed_ids:
                     continue
                 
                 telegram_id = msg.get("clients", {}).get("telegram_id")
-                if not telegram_id:
+                expert_id = msg.get("clients", {}).get("expert_id")
+                
+                if not telegram_id or not expert_id:
                     continue
                 
+                bot_entry = None
+                for token, data in active_bots.items():
+                    if data["expert_id"] == expert_id:
+                        bot_entry = data
+                        break
+                
+                if not bot_entry:
+                    logger.warning(f"No bot found for expert {expert_id}")
+                    continue
+                
+                bot = bot_entry["bot"]
+                
                 try:
-                    # Отправляем сообщение в зависимости от типа
                     if msg["content_type"] == "text" and msg.get("text_content"):
                         await bot.send_message(telegram_id, msg["text_content"])
-                    
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
-                        await bot.send_photo(
-                            telegram_id, 
-                            msg["file_url"],
-                            caption=msg.get("text_content")
-                        )
-                    
+                        await bot.send_photo(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "video" and msg.get("file_url"):
-                        await bot.send_video(
-                            telegram_id,
-                            msg["file_url"],
-                            caption=msg.get("text_content")
-                        )
-                    
+                        await bot.send_video(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
-                        # Скачиваем файл и конвертируем в ogg opus для правильного waveform
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     audio_data = await resp.read()
-                                    
-                                    # Сохраняем временный файл
-                                    import tempfile
-                                    
-                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
-                                        tmp_in.write(audio_data)
-                                        tmp_in_path = tmp_in.name
-                                    
-                                    tmp_out_path = tmp_in_path.replace('.webm', '.ogg')
-                                    
-                                    try:
-                                        # Конвертируем в ogg opus с правильными параметрами
-                                        process = await asyncio.create_subprocess_exec(
-                                            'ffmpeg', '-y', '-i', tmp_in_path,
-                                            '-acodec', 'libopus',
-                                            '-ac', '1',  # моно
-                                            '-ar', '48000',  # частота дискретизации
-                                            '-b:a', '128k',  # битрейт
-                                            '-vbr', 'on',
-                                            tmp_out_path,
-                                            stdout=asyncio.subprocess.PIPE,
-                                            stderr=asyncio.subprocess.PIPE
-                                        )
-                                        stdout, stderr = await process.communicate()
-                                        
-                                        if process.returncode == 0 and os.path.exists(tmp_out_path):
-                                            # Читаем конвертированный файл
-                                            with open(tmp_out_path, 'rb') as f:
-                                                ogg_data = f.read()
-                                            
-                                            voice_file = BufferedInputFile(ogg_data, filename="voice.ogg")
-                                            await bot.send_voice(telegram_id, voice_file)
-                                            logger.info(f"Voice sent with ffmpeg conversion")
-                                        else:
-                                            logger.error(f"FFmpeg failed: {stderr.decode()}")
-                                            voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
-                                            await bot.send_voice(telegram_id, voice_file)
-                                    except Exception as e:
-                                        logger.error(f"FFmpeg error: {e}")
-                                        # Если ffmpeg не сработал, отправляем как есть
-                                        voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
-                                        await bot.send_voice(telegram_id, voice_file)
-                                    finally:
-                                        # Удаляем временные файлы
-                                        if os.path.exists(tmp_in_path):
-                                            os.remove(tmp_in_path)
-                                        if os.path.exists(tmp_out_path):
-                                            os.remove(tmp_out_path)
-                    
-                    elif msg["content_type"] == "audio" and msg.get("file_url"):
-                        # Скачиваем файл и отправляем как аудио
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(msg["file_url"]) as resp:
-                                if resp.status == 200:
-                                    audio_data = await resp.read()
-                                    audio_file = BufferedInputFile(audio_data, filename="audio.mp3")
-                                    await bot.send_audio(telegram_id, audio_file)
-                    
+                                    voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                    await bot.send_voice(telegram_id, voice_file)
                     elif msg["content_type"] == "document" and msg.get("file_url"):
-                        await bot.send_document(
-                            telegram_id,
-                            msg["file_url"],
-                            caption=msg.get("text_content")
-                        )
-                    
+                        await bot.send_document(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "video_note" and msg.get("file_url"):
-                        # Скачиваем видео и конвертируем в круглый формат для video_note
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    
-                                    import tempfile
-                                    
-                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
-                                        tmp_in.write(video_data)
-                                        tmp_in_path = tmp_in.name
-                                    
-                                    tmp_out_path = tmp_in_path.replace('.webm', '_round.mp4')
-                                    
-                                    try:
-                                        # Конвертируем в круглый MP4 (384x384) с правильной ориентацией
-                                        process = await asyncio.create_subprocess_exec(
-                                            'ffmpeg', '-y', '-i', tmp_in_path,
-                                            '-vf', 'crop=min(iw\\,ih):min(iw\\,ih),scale=384:384,transpose=1',
-                                            '-c:v', 'libx264',
-                                            '-preset', 'fast',
-                                            '-c:a', 'aac',
-                                            '-b:a', '128k',
-                                            '-t', '60',
-                                            '-metadata:s:v', 'rotate=0',
-                                            tmp_out_path,
-                                            stdout=asyncio.subprocess.PIPE,
-                                            stderr=asyncio.subprocess.PIPE
-                                        )
-                                        stdout, stderr = await process.communicate()
-                                        
-                                        if process.returncode == 0 and os.path.exists(tmp_out_path):
-                                            with open(tmp_out_path, 'rb') as f:
-                                                mp4_data = f.read()
-                                            
-                                            video_note_file = BufferedInputFile(mp4_data, filename="video_note.mp4")
-                                            await bot.send_video_note(telegram_id, video_note_file)
-                                            logger.info(f"Video note sent with ffmpeg conversion")
-                                        else:
-                                            logger.error(f"FFmpeg video_note failed: {stderr.decode()}")
-                                            video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                            await bot.send_video(telegram_id, video_file)
-                                    except Exception as e:
-                                        logger.error(f"FFmpeg video_note error: {e}")
-                                        video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                        await bot.send_video(telegram_id, video_file)
-                                    finally:
-                                        if os.path.exists(tmp_in_path):
-                                            os.remove(tmp_in_path)
-                                        if os.path.exists(tmp_out_path):
-                                            os.remove(tmp_out_path)
+                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                    await bot.send_video(telegram_id, video_file)
                     
-                    # Помечаем как прочитанное
-                    supabase.table("messages").update(
-                        {"is_read": True}
-                    ).eq("id", msg["id"]).execute()
-                    
+                    supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
                     logger.info(f"Sent message {msg['id']} to {telegram_id}")
-                    
                 except Exception as e:
                     logger.error(f"Error sending message {msg['id']}: {e}")
                     processed_ids.add(msg["id"])
-            
         except Exception as e:
             logger.error(f"Error in send_expert_messages: {e}")
         
-        await asyncio.sleep(2)  # Проверяем каждые 2 секунды
+        await asyncio.sleep(2)
 
 
-# ==================== FastAPI для Webhook ====================
+# ==================== FASTAPI ====================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Запуск при старте
-    asyncio.create_task(dp.start_polling(bot))
+    await initialize_all_bots()
     asyncio.create_task(send_expert_messages())
-    logger.info("Bot started!")
+    logger.info("Multi-bot server started!")
     yield
-    # Остановка
-    logger.info("Bot stopped!")
+    logger.info("Server stopped!")
 
 app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Diagnostic Bot API"}
+    return {"status": "ok", "message": "Multi-Bot Diagnostic API", "active_bots": len(active_bots)}
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "active_bots": len(active_bots)}
 
 
-@app.post("/webhook/wayforpay")
-async def wayforpay_webhook(request: Request):
-    """Webhook для WayForPay"""
+@app.post("/webhook/telegram/{bot_token}")
+async def telegram_webhook(bot_token: str, request: Request):
+    """Webhook для Telegram ботів"""
+    if bot_token not in active_bots:
+        logger.warning(f"Unknown bot token: {bot_token[:20]}...")
+        raise HTTPException(status_code=404, detail="Bot not found")
+    
+    bot_entry = active_bots[bot_token]
+    bot = bot_entry["bot"]
+    dp = bot_entry["dp"]
+    
     try:
-        data = await request.json()
-        logger.info(f"WayForPay webhook received: {data}")
-        
-        # Проверяем статус транзакции
-        transaction_status = data.get("transactionStatus")
-        
-        if transaction_status == "Approved":
-            # Оплата успешна - создаём токен
-            order_id = data.get("orderReference")
-            amount = data.get("amount")
-            email = data.get("email", "")
-            phone = data.get("phone", "")
-            
-            # Генерируем уникальный токен
-            token = generate_token()
-            
-            # Сохраняем в базу
-            supabase.table("payment_tokens").insert({
-                "token": token,
-                "email": email,
-                "phone": phone,
-                "amount": amount,
-                "order_id": order_id,
-                "status": "unused"
-            }).execute()
-            
-            logger.info(f"Payment token created: {token} for order {order_id}")
-            
-            # Формируем ссылку на бота
-            bot_username = "testlid12bot"  # Замени на username твоего бота
-            bot_link = f"https://t.me/{bot_username}?start={token}"
-            
-            # WayForPay ожидает ответ в определённом формате
-            response_data = {
-                "orderReference": order_id,
-                "status": "accept",
-                "time": int(datetime.now().timestamp())
-            }
-            
-            # Можно также вернуть ссылку для редиректа
-            # Это нужно настроить на стороне WayForPay или твоего сайта
-            
-            return JSONResponse(content=response_data)
-        
-        else:
-            logger.warning(f"Payment not approved: {transaction_status}")
-            return JSONResponse(content={"status": "reject"})
-            
+        update_data = await request.json()
+        update = types.Update(**update_data)
+        await dp.feed_update(bot, update)
+        return {"ok": True}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/create-token")
-async def create_token_api(request: Request):
-    """API для создания токена вручную (для тестов или интеграции)"""
+@app.post("/api/register-bot")
+async def register_bot_api(request: Request):
+    """API для реєстрації нового бота"""
     try:
         data = await request.json()
+        bot_token = data.get("bot_token")
+        expert_id = data.get("expert_id")
         
+        if not bot_token or not expert_id:
+            raise HTTPException(status_code=400, detail="bot_token and expert_id required")
+        
+        # Перевіряємо чи токен валідний
+        try:
+            test_bot = Bot(token=bot_token)
+            bot_info = await test_bot.get_me()
+            bot_username = bot_info.username
+            bot_name = bot_info.first_name
+            await test_bot.session.close()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid bot token: {e}")
+        
+        # Перевіряємо чи бот вже існує
+        existing = supabase.table("bots").select("id").eq("bot_token", bot_token).execute()
+        if existing.data:
+            raise HTTPException(status_code=400, detail="Bot already registered")
+        
+        # Додаємо в базу
+        new_bot = {
+            "bot_token": bot_token,
+            "bot_username": bot_username,
+            "bot_name": bot_name,
+            "expert_id": expert_id,
+            "is_active": True,
+            "webhook_set": False
+        }
+        result = supabase.table("bots").insert(new_bot).execute()
+        bot_data = result.data[0]
+        
+        # Ініціалізуємо бота
+        await initialize_bot(bot_data)
+        
+        return {
+            "success": True,
+            "bot_id": bot_data["id"],
+            "bot_username": bot_username,
+            "bot_name": bot_name,
+            "message": f"Bot @{bot_username} registered successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Register bot error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/bot/{bot_id}")
+async def delete_bot_api(bot_id: str):
+    """Видалити бота"""
+    try:
+        result = supabase.table("bots").select("*").eq("id", bot_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        bot_data = result.data[0]
+        bot_token = bot_data["bot_token"]
+        
+        supabase.table("bots").update({"is_active": False}).eq("id", bot_id).execute()
+        
+        if bot_token in active_bots:
+            bot = active_bots[bot_token]["bot"]
+            try:
+                await bot.delete_webhook()
+            except:
+                pass
+            del active_bots[bot_token]
+        
+        return {"success": True, "message": "Bot deactivated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete bot error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bots")
+async def list_bots_api():
+    """Список всіх активних ботів"""
+    bots = await load_all_bots()
+    return {"bots": [{"id": b["id"], "bot_username": b.get("bot_username"), "bot_name": b.get("bot_name"), "expert_id": b["expert_id"], "is_active": b["is_active"], "webhook_set": b.get("webhook_set", False)} for b in bots]}
+
+
+@app.post("/api/create-token")
+async def create_token_api(request: Request):
+    """API для створення токена оплати"""
+    try:
+        data = await request.json()
         email = data.get("email", "")
         phone = data.get("phone", "")
         amount = data.get("amount", 0)
         order_id = data.get("order_id", "")
+        bot_id = data.get("bot_id", "")
         
-        # Генерируем токен
         token = generate_token()
         
-        # Сохраняем в базу
         supabase.table("payment_tokens").insert({
             "token": token,
             "email": email,
@@ -719,35 +593,16 @@ async def create_token_api(request: Request):
             "status": "unused"
         }).execute()
         
-        bot_username = "testlid12bot"  # Замени на username твоего бота
-        bot_link = f"https://t.me/{bot_username}?start={token}"
+        bot_username = "bot"
+        if bot_id:
+            bot_result = supabase.table("bots").select("bot_username").eq("id", bot_id).execute()
+            if bot_result.data:
+                bot_username = bot_result.data[0]["bot_username"]
         
-        return {
-            "success": True,
-            "token": token,
-            "bot_link": bot_link
-        }
-        
+        return {"success": True, "token": token, "bot_link": f"https://t.me/{bot_username}?start={token}"}
     except Exception as e:
         logger.error(f"Create token error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/token/{token}")
-async def check_token(token: str):
-    """Проверка статуса токена"""
-    result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
-    
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Token not found")
-    
-    token_data = result.data[0]
-    return {
-        "token": token,
-        "status": token_data["status"],
-        "created_at": token_data["created_at"],
-        "expires_at": token_data["expires_at"]
-    }
 
 
 if __name__ == "__main__":
