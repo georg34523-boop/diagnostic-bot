@@ -556,16 +556,26 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
     return { total, done, conversion: total > 0 ? Math.round(done / total * 100) : 0 };
   };
 
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const adminTabs = [
+    { id: 'experts', icon: '👥', label: 'Експерти' },
+    { id: 'bots', icon: '🤖', label: 'Боти' },
+    { id: 'stats', icon: '📊', label: 'Статистика' },
+  ];
+
   return (
     <div className="fixed inset-0 flex flex-col bg-black">
       {/* Header */}
-      <nav className="flex-shrink-0 bg-zinc-950 border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
+      <nav className="flex-shrink-0 bg-zinc-950 border-b border-zinc-800 px-4 md:px-6 py-3 flex items-center justify-between">
         <Logo />
-        <div className="flex items-center gap-4">
+        
+        {/* Desktop Navigation */}
+        <div className="hidden md:flex items-center gap-4">
           <div className="flex gap-2">
-            {['experts', 'bots', 'stats'].map(v => (
-              <button key={v} onClick={() => setView(v)} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${view === v ? 'bg-white text-black' : 'text-zinc-400 hover:bg-zinc-800'}`}>
-                {v === 'experts' ? '👥 Експерти' : v === 'bots' ? '🤖 Боти' : '📊 Статистика'}
+            {adminTabs.map(tab => (
+              <button key={tab.id} onClick={() => setView(tab.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 ${view === tab.id ? 'bg-white text-black' : 'text-zinc-400 hover:bg-zinc-800'}`}>
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
               </button>
             ))}
           </div>
@@ -573,30 +583,58 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           </button>
         </div>
+
+        {/* Mobile Navigation */}
+        <div className="flex md:hidden items-center gap-2">
+          <span className="text-zinc-400 text-sm">{adminTabs.find(t => t.id === view)?.icon} {adminTabs.find(t => t.id === view)?.label}</span>
+          <div className="relative">
+            <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
+            </button>
+            {showMobileMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
+                <div className="absolute right-0 top-full mt-2 w-56 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                  {adminTabs.map(tab => (
+                    <button key={tab.id} onClick={() => { setView(tab.id); setShowMobileMenu(false); }} className={`w-full px-4 py-3 text-left flex items-center gap-3 transition ${view === tab.id ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-800'}`}>
+                      <span>{tab.icon}</span>
+                      <span>{tab.label}</span>
+                    </button>
+                  ))}
+                  <div className="border-t border-zinc-800" />
+                  <button onClick={() => { onLogout(); setShowMobileMenu(false); }} className="w-full px-4 py-3 text-left flex items-center gap-3 text-red-400 hover:bg-zinc-800">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                    <span>Вийти</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </nav>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
         {view === 'experts' && (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-6">Експерти</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Експерти</h2>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {experts.map(expert => {
                 const stats = getExpertStats(expert.id);
                 const expertBots = bots.filter(b => b.expert_id === expert.id);
                 return (
-                  <div key={expert.id} className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 hover:border-zinc-700 transition cursor-pointer" onClick={() => onSelectExpert(expert)}>
-                    <div className="flex items-center gap-4 mb-4">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-white font-bold text-lg">{expert.name[0]}</div>
-                      <div>
-                        <div className="font-medium text-white text-lg">{expert.name}</div>
-                        <div className="text-zinc-500 text-sm">{expert.email}</div>
+                  <div key={expert.id} className="bg-zinc-900 rounded-2xl p-5 md:p-6 border border-zinc-800 hover:border-zinc-700 transition cursor-pointer" onClick={() => onSelectExpert(expert)}>
+                    <div className="flex items-center gap-3 md:gap-4 mb-4">
+                      <div className="w-11 h-11 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-white font-bold text-lg">{expert.name[0]}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-white text-base md:text-lg truncate">{expert.name}</div>
+                        <div className="text-zinc-500 text-sm truncate">{expert.email}</div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-4 mb-4">
-                      <div><div className="text-2xl font-bold text-white">{stats.total}</div><div className="text-zinc-500 text-xs">Клієнтів</div></div>
-                      <div><div className="text-2xl font-bold text-emerald-400">{stats.conversion}%</div><div className="text-zinc-500 text-xs">Конверсія</div></div>
-                      <div><div className="text-2xl font-bold text-sky-400">{expertBots.length}</div><div className="text-zinc-500 text-xs">Ботів</div></div>
+                    <div className="grid grid-cols-3 gap-3 md:gap-4 mb-4">
+                      <div><div className="text-xl md:text-2xl font-bold text-white">{stats.total}</div><div className="text-zinc-500 text-xs">Клієнтів</div></div>
+                      <div><div className="text-xl md:text-2xl font-bold text-emerald-400">{stats.conversion}%</div><div className="text-zinc-500 text-xs">Конверсія</div></div>
+                      <div><div className="text-xl md:text-2xl font-bold text-sky-400">{expertBots.length}</div><div className="text-zinc-500 text-xs">Ботів</div></div>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {expertBots.map(bot => (
@@ -613,10 +651,10 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
 
         {view === 'bots' && (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-6">Боти</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Боти</h2>
             <div className="space-y-4">
               {bots.map(bot => (
-                <div key={bot.id} className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                <div key={bot.id} className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center text-2xl">🤖</div>
@@ -639,35 +677,35 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
 
         {view === 'stats' && (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-6">Загальна статистика</h2>
-            <div className="grid gap-4 md:grid-cols-4 mb-8">
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <div className="text-4xl font-bold text-white">{experts.length}</div>
-                <div className="text-zinc-500 mt-1">Експертів</div>
+            <h2 className="text-xl md:text-2xl font-bold text-white mb-4 md:mb-6">Загальна статистика</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
+              <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+                <div className="text-2xl md:text-4xl font-bold text-white">{experts.length}</div>
+                <div className="text-zinc-500 mt-1 text-sm">Експертів</div>
               </div>
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <div className="text-4xl font-bold text-emerald-400">{bots.length}</div>
-                <div className="text-zinc-500 mt-1">Ботів</div>
+              <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+                <div className="text-2xl md:text-4xl font-bold text-emerald-400">{bots.length}</div>
+                <div className="text-zinc-500 mt-1 text-sm">Ботів</div>
               </div>
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <div className="text-4xl font-bold text-sky-400">{allClients.length}</div>
-                <div className="text-zinc-500 mt-1">Клієнтів</div>
+              <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+                <div className="text-2xl md:text-4xl font-bold text-sky-400">{allClients.length}</div>
+                <div className="text-zinc-500 mt-1 text-sm">Клієнтів</div>
               </div>
-              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-                <div className="text-4xl font-bold text-violet-400">
+              <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+                <div className="text-2xl md:text-4xl font-bold text-violet-400">
                   {allClients.length > 0 ? Math.round(allClients.filter(c => ['diagnostic_done', 'call_scheduled', 'call_done'].includes(c.status)).length / allClients.length * 100) : 0}%
                 </div>
-                <div className="text-zinc-500 mt-1">Конверсія</div>
+                <div className="text-zinc-500 mt-1 text-sm">Конверсія</div>
               </div>
             </div>
             
-            <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
               <h3 className="text-lg font-medium text-white mb-4">По статусах</h3>
               <div className="space-y-3">
                 {Object.entries(STATUSES).map(([key, { label, color }]) => {
                   const count = allClients.filter(c => c.status === key).length;
                   const pct = allClients.length > 0 ? Math.round(count / allClients.length * 100) : 0;
-                  return (<div key={key} className="flex items-center gap-4"><div className="w-48 text-zinc-400 text-sm">{label}</div><div className="flex-1 bg-zinc-800 rounded-full h-3"><div className={`h-full rounded-full ${color}`} style={{ width: pct + '%' }} /></div><div className="w-16 text-right text-white text-sm">{count}</div></div>);
+                  return (<div key={key} className="flex items-center gap-2 md:gap-4"><div className="w-28 md:w-48 text-zinc-400 text-xs md:text-sm truncate">{label}</div><div className="flex-1 bg-zinc-800 rounded-full h-2 md:h-3"><div className={`h-full rounded-full ${color}`} style={{ width: pct + '%' }} /></div><div className="w-10 md:w-16 text-right text-white text-sm">{count}</div></div>);
                 })}
               </div>
             </div>
