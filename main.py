@@ -212,6 +212,13 @@ async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
 def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, expert_id: str, welcome_message: str):
     """Створити обробники для конкретного бота"""
     
+    async def get_welcome_message():
+        """Отримати актуальне привітальне повідомлення з бази"""
+        result = supabase.table("bots").select("welcome_message").eq("id", bot_id).execute()
+        if result.data and result.data[0].get("welcome_message"):
+            return result.data[0]["welcome_message"]
+        return "👋 Вітаю! Надішліть фото для діагностики 📸"
+    
     @dp.message(CommandStart())
     async def cmd_start(message: Message, command: CommandObject):
         telegram_id = message.from_user.id
@@ -227,11 +234,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                 await authorize_user(telegram_id, bot_id, expert_id, username, email, phone)
                 await get_or_create_client(message.from_user, bot_id, expert_id, email, phone)
                 
-                await message.answer(welcome_message or 
-                    "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
-                    "Найближчим часом я зв'яжусь з вами.\n\n"
-                    "📸 Надішліть фото для діагностики."
-                )
+                current_welcome = await get_welcome_message()
+                await message.answer(current_welcome)
                 return
             else:
                 await message.answer(f"❌ {result['error']}\n\nЯкщо виникли проблеми, напишіть в підтримку.")
@@ -246,7 +250,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             return
         
         await get_or_create_client(message.from_user, bot_id, expert_id)
-        await message.answer(welcome_message or "👋 Вітаю! Надішліть фото для діагностики 📸")
+        current_welcome = await get_welcome_message()
+        await message.answer(current_welcome)
 
     @dp.message(Command("help"))
     async def cmd_help(message: Message):
