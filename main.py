@@ -534,8 +534,12 @@ async def register_bot_api(request: Request):
             if existing.data[0]["is_active"]:
                 raise HTTPException(status_code=400, detail="Bot already registered")
             else:
-                # Реактивуємо бота
-                supabase.table("bots").update({"is_active": True, "webhook_set": False}).eq("id", existing.data[0]["id"]).execute()
+                # Реактивуємо бота і оновлюємо expert_id (бот може перейти до іншого експерта)
+                supabase.table("bots").update({
+                    "is_active": True, 
+                    "webhook_set": False,
+                    "expert_id": expert_id
+                }).eq("id", existing.data[0]["id"]).execute()
                 bot_data = supabase.table("bots").select("*").eq("id", existing.data[0]["id"]).execute().data[0]
         else:
             # Додаємо в базу
