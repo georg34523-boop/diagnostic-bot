@@ -272,43 +272,232 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
 };
 
 // ==================== ANALYTICS ====================
-const Analytics = ({ clients, unreadDialogs, onPeriodChange, period }) => {
-  const periods = [{ value: 'all', label: 'Весь час' }, { value: 'week', label: 'Тиждень' }, { value: 'month', label: 'Місяць' }];
+const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExpertView = true }) => {
+  const [selectedBot, setSelectedBot] = useState('all');
+  const periods = [
+    { value: 'today', label: 'Сьогодні' },
+    { value: 'week', label: 'Тиждень' },
+    { value: 'month', label: 'Місяць' },
+    { value: 'all', label: 'Весь час' }
+  ];
   
-  const getFilteredClients = () => {
-    if (period === 'all') return clients;
+  // Фільтрація по періоду
+  const getFilteredByPeriod = (data) => {
+    if (period === 'all') return data;
     const now = new Date();
-    const start = period === 'week' ? new Date(now - 7*24*60*60*1000) : new Date(now - 30*24*60*60*1000);
-    return clients.filter(c => new Date(c.created_at) >= start);
+    let start;
+    if (period === 'today') start = new Date(now.setHours(0,0,0,0));
+    else if (period === 'week') start = new Date(now - 7*24*60*60*1000);
+    else start = new Date(now - 30*24*60*60*1000);
+    return data.filter(c => new Date(c.created_at) >= start);
   };
   
-  const filtered = getFilteredClients();
+  // Фільтрація по боту
+  const getFilteredByBot = (data) => {
+    if (selectedBot === 'all') return data;
+    return data.filter(c => c.bot_id === selectedBot);
+  };
+  
+  // Унікальні клієнти по telegram_id (для загальної статистики)
+  const getUniqueClients = (data) => {
+    const uniqueMap = new Map();
+    data.forEach(c => {
+      if (!uniqueMap.has(c.telegram_id) || new Date(c.created_at) < new Date(uniqueMap.get(c.telegram_id).created_at)) {
+        uniqueMap.set(c.telegram_id, c);
+      }
+    });
+    return Array.from(uniqueMap.values());
+  };
+  
+  const filteredByPeriod = getFilteredByPeriod(clients);
+  const filteredByBot = getFilteredByBot(filteredByPeriod);
+  
+  // Для загальних показників - унікальні клієнти
+  const uniqueClients = selectedBot === 'all' ? getUniqueClients(filteredByPeriod) : filteredByBot;
+  
+  // Статуси
   const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
-  filtered.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
-  const total = filtered.length;
+  uniqueClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
+  
+  const total = uniqueClients.length;
   const converted = statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done;
   const conversionRate = total > 0 ? Math.round(converted / total * 100) : 0;
   
+  // Динаміка по днях (останні 14 днів)
+  const getDynamicsData = () => {
+    const days = [];
+    const now = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      const dayClients = (selectedBot === 'all' ? clients : clients.filter(c => c.bot_id === selectedBot))
+        .filter(c => {
+          const created = new Date(c.created_at);
+          return created >= date && created < nextDate;
+        });
+      
+      // Унікальні за день
+      const uniqueDay = selectedBot === 'all' ? getUniqueClients(dayClients) : dayClients;
+      
+      days.push({
+        date: date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' }),
+        count: uniqueDay.length
+      });
+    }
+    return days;
+  };
+  
+  const dynamicsData = getDynamicsData();
+  const maxCount = Math.max(...dynamicsData.map(d => d.count), 1);
+  
+  // Статистика по ботах
+  const getBotStats = () => {
+    return bots.map(bot => {
+      const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
+      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.call_scheduled + botStatusCounts.call_done;
+      return {
+        ...bot,
+        clientsCount: botClients.length,
+        conversion: botClients.length > 0 ? Math.round(botConverted / botClients.length * 100) : 0,
+        statusCounts: botStatusCounts
+      };
+    });
+  };
+  
+  const botStats = getBotStats();
+  
   return (
-    <div className="flex-1 overflow-y-auto bg-black p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex-1 overflow-y-auto bg-black p-4 md:p-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <h2 className="text-2xl font-bold text-white">Аналітика</h2>
-        <div className="flex gap-2">{periods.map(p => <button key={p.value} onClick={() => onPeriodChange(p.value)} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>{p.label}</button>)}</div>
+        <div className="flex flex-wrap gap-2">
+          {periods.map(p => (
+            <button key={p.value} onClick={() => onPeriodChange(p.value)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-white">{total}</div><div className="text-zinc-500 mt-1 text-sm">Клієнтів</div></div>
-        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-emerald-400">{unreadDialogs}</div><div className="text-zinc-500 mt-1 text-sm">Очікують</div></div>
-        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-sky-400">{conversionRate}%</div><div className="text-zinc-500 mt-1 text-sm">Конверсія</div></div>
-        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-violet-400">{statusCounts.call_done}</div><div className="text-zinc-500 mt-1 text-sm">Дзвінків</div></div>
+      
+      {/* Bot Filter */}
+      {bots.length > 1 && (
+        <div className="mb-6">
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setSelectedBot('all')} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedBot === 'all' ? 'bg-emerald-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+              Всі боти
+            </button>
+            {bots.map(bot => (
+              <button key={bot.id} onClick={() => setSelectedBot(bot.id)} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedBot === bot.id ? 'bg-emerald-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+                @{bot.bot_username}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Main Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-white">{total}</div>
+          <div className="text-zinc-500 mt-1 text-sm">{selectedBot === 'all' ? 'Унік. клієнтів' : 'Клієнтів'}</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-emerald-400">{conversionRate}%</div>
+          <div className="text-zinc-500 mt-1 text-sm">Конверсія</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-sky-400">{statusCounts.diagnostic_done}</div>
+          <div className="text-zinc-500 mt-1 text-sm">Діагностик</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.call_done}</div>
+          <div className="text-zinc-500 mt-1 text-sm">Дзвінків</div>
+        </div>
       </div>
-      <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+      
+      {/* Dynamics Chart */}
+      <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Нові клієнти (14 днів)</h3>
+        <div className="flex items-end gap-1 h-32">
+          {dynamicsData.map((day, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full bg-zinc-800 rounded-t relative" style={{ height: `${(day.count / maxCount) * 100}%`, minHeight: day.count > 0 ? '4px' : '0' }}>
+                <div className="absolute inset-0 bg-emerald-500 rounded-t opacity-80"></div>
+              </div>
+              <span className="text-xs text-zinc-600 truncate w-full text-center hidden md:block">{day.date}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between mt-2 md:hidden">
+          <span className="text-xs text-zinc-500">{dynamicsData[0]?.date}</span>
+          <span className="text-xs text-zinc-500">{dynamicsData[dynamicsData.length - 1]?.date}</span>
+        </div>
+      </div>
+      
+      {/* Funnel */}
+      <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
         <h3 className="text-lg font-medium text-white mb-4">Воронка</h3>
-        <div className="space-y-4">{Object.entries(STATUSES).map(([key, { label, color }]) => {
-          const count = statusCounts[key] || 0;
-          const pct = total > 0 ? Math.round(count / total * 100) : 0;
-          return <div key={key} className="flex items-center gap-4"><div className="w-32 md:w-40 text-zinc-400 text-sm truncate">{label}</div><div className="flex-1 bg-zinc-800 rounded-full h-3 overflow-hidden"><div className={`h-full ${color}`} style={{ width: pct + '%' }} /></div><div className="w-16 text-right text-white text-sm">{count}</div></div>;
-        })}</div>
+        <div className="space-y-3">
+          {Object.entries(STATUSES).map(([key, { label, color }]) => {
+            const count = statusCounts[key] || 0;
+            const pct = total > 0 ? Math.round(count / total * 100) : 0;
+            return (
+              <div key={key} className="flex items-center gap-3">
+                <div className="w-28 md:w-36 text-zinc-400 text-sm truncate">{label}</div>
+                <div className="flex-1 bg-zinc-800 rounded-full h-4 overflow-hidden">
+                  <div className={`h-full ${color} transition-all duration-500`} style={{ width: pct + '%' }} />
+                </div>
+                <div className="w-12 text-right text-white text-sm font-medium">{count}</div>
+                <div className="w-12 text-right text-zinc-500 text-sm">{pct}%</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
+      
+      {/* Bot Stats (тільки якщо вибрано "Всі боти") */}
+      {selectedBot === 'all' && bots.length > 0 && (
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+          <h3 className="text-lg font-medium text-white mb-4">Статистика по ботах</h3>
+          <div className="space-y-3">
+            {botStats.map(bot => (
+              <div key={bot.id} className="bg-black/50 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">🤖</span>
+                    <span className="text-white font-medium">@{bot.bot_username}</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="text-white font-bold">{bot.clientsCount}</div>
+                      <div className="text-xs text-zinc-500">клієнтів</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-emerald-400 font-bold">{bot.conversion}%</div>
+                      <div className="text-xs text-zinc-500">конверсія</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {Object.entries(STATUSES).map(([key, { label, color }]) => (
+                    <div key={key} className="flex-1 text-center">
+                      <div className={`text-sm font-medium ${color.replace('bg-', 'text-')}`}>{bot.statusCounts[key]}</div>
+                      <div className="text-xs text-zinc-600 truncate">{label.split(' ')[0]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -879,7 +1068,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
           </>
         )}
         {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} />}
-        {activeTab === 'analytics' && <Analytics clients={clients} unreadDialogs={unreadDialogs} onPeriodChange={setAnalyticsPeriod} period={analyticsPeriod} />}
+        {activeTab === 'analytics' && <Analytics clients={clients} bots={bots} unreadDialogs={unreadDialogs} onPeriodChange={setAnalyticsPeriod} period={analyticsPeriod} />}
         {activeTab === 'settings' && <Settings bots={bots} activeBot={activeBot} expertId={expertId} onBotAdded={handleBotAdded} onBotDeleted={handleBotDeleted} onBotUpdated={handleBotUpdated} authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
         {activeTab === 'templates' && <Templates templates={templates} onAddTemplate={handleAddTemplate} onDeleteTemplate={handleDeleteTemplate} />}
@@ -1284,14 +1473,17 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {bots.map(bot => {
                 const botClients = allClients.filter(c => c.bot_id === bot.id);
+                const botConverted = botClients.filter(c => ['diagnostic_done', 'call_scheduled', 'call_done'].includes(c.status)).length;
+                const botConversion = botClients.length > 0 ? Math.round(botConverted / botClients.length * 100) : 0;
                 return (
                   <div key={bot.id} className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
                     <div className="flex items-center gap-4 mb-4">
                       <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-2xl">🤖</div>
                       <div><div className="font-medium text-white">@{bot.bot_username}</div><div className="text-sm text-zinc-500">{bot.experts?.name}</div></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-white">{botClients.length}</div><div className="text-xs text-zinc-500">Клієнтів</div></div>
+                      <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-emerald-400">{botConversion}%</div><div className="text-xs text-zinc-500">Конверсія</div></div>
                       <div className="bg-black rounded-lg p-2 text-center"><div className={`text-lg font-bold ${bot.webhook_set ? 'text-emerald-400' : 'text-yellow-400'}`}>{bot.webhook_set ? '✓' : '⏳'}</div><div className="text-xs text-zinc-500">Webhook</div></div>
                     </div>
                   </div>
@@ -1301,26 +1493,339 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
           </div>
         )}
 
-        {view === 'stats' && (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-6">Загальна статистика</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-white">{totalStats.experts}</div><div className="text-zinc-500 text-sm">Експертів</div></div>
-              <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-sky-400">{totalStats.bots}</div><div className="text-zinc-500 text-sm">Ботів</div></div>
-              <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-emerald-400">{totalStats.clients}</div><div className="text-zinc-500 text-sm">Клієнтів</div></div>
-              <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800"><div className="text-3xl font-bold text-violet-400">{totalStats.conversion}%</div><div className="text-zinc-500 text-sm">Конверсія</div></div>
-            </div>
-            <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
-              <h3 className="text-lg font-medium text-white mb-4">Воронка (всі клієнти)</h3>
-              <div className="space-y-4">{Object.entries(STATUSES).map(([key, { label, color }]) => {
-                const count = allClients.filter(c => c.status === key).length;
-                const pct = allClients.length > 0 ? Math.round(count / allClients.length * 100) : 0;
-                return <div key={key} className="flex items-center gap-4"><div className="w-32 md:w-40 text-zinc-400 text-sm truncate">{label}</div><div className="flex-1 bg-zinc-800 rounded-full h-3 overflow-hidden"><div className={`h-full ${color}`} style={{ width: pct + '%' }} /></div><div className="w-16 text-right text-white text-sm">{count}</div></div>;
-              })}</div>
-            </div>
-          </div>
-        )}
+        {view === 'stats' && <AdminAnalytics experts={experts} bots={bots} allClients={allClients} />}
       </div>
+    </div>
+  );
+};
+
+// ==================== ADMIN ANALYTICS ====================
+const AdminAnalytics = ({ experts, bots, allClients }) => {
+  const [period, setPeriod] = useState('all');
+  const [selectedExpert, setSelectedExpert] = useState('all');
+  const [selectedBot, setSelectedBot] = useState('all');
+  
+  const periods = [
+    { value: 'today', label: 'Сьогодні' },
+    { value: 'week', label: 'Тиждень' },
+    { value: 'month', label: 'Місяць' },
+    { value: 'all', label: 'Весь час' }
+  ];
+  
+  // Фільтрація по періоду
+  const getFilteredByPeriod = (data) => {
+    if (period === 'all') return data;
+    const now = new Date();
+    let start;
+    if (period === 'today') start = new Date(now.setHours(0,0,0,0));
+    else if (period === 'week') start = new Date(Date.now() - 7*24*60*60*1000);
+    else start = new Date(Date.now() - 30*24*60*60*1000);
+    return data.filter(c => new Date(c.created_at) >= start);
+  };
+  
+  // Унікальні клієнти глобально (по telegram_id)
+  const getGlobalUniqueClients = (data) => {
+    const uniqueMap = new Map();
+    data.forEach(c => {
+      if (!uniqueMap.has(c.telegram_id)) {
+        uniqueMap.set(c.telegram_id, c);
+      }
+    });
+    return Array.from(uniqueMap.values());
+  };
+  
+  // Унікальні клієнти для експерта
+  const getExpertUniqueClients = (data, expertId) => {
+    const expertClients = data.filter(c => c.expert_id === expertId);
+    const uniqueMap = new Map();
+    expertClients.forEach(c => {
+      if (!uniqueMap.has(c.telegram_id)) {
+        uniqueMap.set(c.telegram_id, c);
+      }
+    });
+    return Array.from(uniqueMap.values());
+  };
+  
+  const filteredByPeriod = getFilteredByPeriod(allClients);
+  
+  // Визначаємо що показувати
+  let displayClients = [];
+  let displayBots = bots;
+  
+  if (selectedExpert === 'all' && selectedBot === 'all') {
+    displayClients = getGlobalUniqueClients(filteredByPeriod);
+  } else if (selectedExpert !== 'all' && selectedBot === 'all') {
+    displayClients = getExpertUniqueClients(filteredByPeriod, selectedExpert);
+    displayBots = bots.filter(b => b.expert_id === selectedExpert);
+  } else if (selectedBot !== 'all') {
+    displayClients = filteredByPeriod.filter(c => c.bot_id === selectedBot);
+    displayBots = bots.filter(b => b.id === selectedBot);
+  }
+  
+  // Статуси
+  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+  displayClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
+  
+  const total = displayClients.length;
+  const converted = statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done;
+  const conversionRate = total > 0 ? Math.round(converted / total * 100) : 0;
+  
+  // Динаміка по днях
+  const getDynamicsData = () => {
+    const days = [];
+    const now = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      let dayClients = allClients.filter(c => {
+        const created = new Date(c.created_at);
+        return created >= date && created < nextDate;
+      });
+      
+      if (selectedExpert !== 'all') {
+        dayClients = dayClients.filter(c => c.expert_id === selectedExpert);
+      }
+      if (selectedBot !== 'all') {
+        dayClients = dayClients.filter(c => c.bot_id === selectedBot);
+      }
+      
+      // Унікальні
+      const uniqueDay = selectedBot === 'all' ? getGlobalUniqueClients(dayClients) : dayClients;
+      
+      days.push({
+        date: date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' }),
+        count: uniqueDay.length
+      });
+    }
+    return days;
+  };
+  
+  const dynamicsData = getDynamicsData();
+  const maxCount = Math.max(...dynamicsData.map(d => d.count), 1);
+  
+  // Статистика по експертах
+  const getExpertStats = () => {
+    return experts.map(expert => {
+      const expertClients = getExpertUniqueClients(filteredByPeriod, expert.id);
+      const expertStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      expertClients.forEach(c => { if (expertStatusCounts[c.status] !== undefined) expertStatusCounts[c.status]++; });
+      const expertConverted = expertStatusCounts.diagnostic_done + expertStatusCounts.call_scheduled + expertStatusCounts.call_done;
+      const expertBots = bots.filter(b => b.expert_id === expert.id);
+      return {
+        ...expert,
+        uniqueClients: expertClients.length,
+        conversion: expertClients.length > 0 ? Math.round(expertConverted / expertClients.length * 100) : 0,
+        botsCount: expertBots.length,
+        statusCounts: expertStatusCounts
+      };
+    });
+  };
+  
+  // Статистика по ботах
+  const getBotStats = () => {
+    return displayBots.map(bot => {
+      const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
+      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.call_scheduled + botStatusCounts.call_done;
+      return {
+        ...bot,
+        clientsCount: botClients.length,
+        conversion: botClients.length > 0 ? Math.round(botConverted / botClients.length * 100) : 0,
+        statusCounts: botStatusCounts
+      };
+    });
+  };
+  
+  const expertStats = getExpertStats();
+  const botStats = getBotStats();
+  
+  // Скинути бота при зміні експерта
+  const handleExpertChange = (expertId) => {
+    setSelectedExpert(expertId);
+    setSelectedBot('all');
+  };
+  
+  return (
+    <div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <h2 className="text-2xl font-bold text-white">Аналітика</h2>
+        <div className="flex flex-wrap gap-2">
+          {periods.map(p => (
+            <button key={p.value} onClick={() => setPeriod(p.value)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${period === p.value ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {/* Expert Filter */}
+      <div className="mb-4">
+        <div className="text-sm text-zinc-500 mb-2">Експерт:</div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => handleExpertChange('all')} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedExpert === 'all' ? 'bg-violet-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+            Всі експерти
+          </button>
+          {experts.map(expert => (
+            <button key={expert.id} onClick={() => handleExpertChange(expert.id)} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedExpert === expert.id ? 'bg-violet-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+              {expert.name}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {/* Bot Filter */}
+      {displayBots.length > 0 && (
+        <div className="mb-6">
+          <div className="text-sm text-zinc-500 mb-2">Бот:</div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setSelectedBot('all')} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedBot === 'all' ? 'bg-emerald-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+              Всі боти
+            </button>
+            {displayBots.map(bot => (
+              <button key={bot.id} onClick={() => setSelectedBot(bot.id)} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${selectedBot === bot.id ? 'bg-emerald-500 text-white' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>
+                @{bot.bot_username}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Main Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-white">{total}</div>
+          <div className="text-zinc-500 mt-1 text-sm">Унік. клієнтів</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-emerald-400">{conversionRate}%</div>
+          <div className="text-zinc-500 mt-1 text-sm">Конверсія</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-sky-400">{statusCounts.diagnostic_done}</div>
+          <div className="text-zinc-500 mt-1 text-sm">Діагностик</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
+          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.call_done}</div>
+          <div className="text-zinc-500 mt-1 text-sm">Дзвінків</div>
+        </div>
+      </div>
+      
+      {/* Dynamics Chart */}
+      <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Нові клієнти (14 днів)</h3>
+        <div className="flex items-end gap-1 h-32">
+          {dynamicsData.map((day, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              <div className="text-xs text-zinc-400 mb-1">{day.count > 0 ? day.count : ''}</div>
+              <div className="w-full bg-zinc-800 rounded-t relative" style={{ height: `${(day.count / maxCount) * 100}%`, minHeight: day.count > 0 ? '4px' : '0' }}>
+                <div className="absolute inset-0 bg-emerald-500 rounded-t opacity-80"></div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between mt-2">
+          <span className="text-xs text-zinc-500">{dynamicsData[0]?.date}</span>
+          <span className="text-xs text-zinc-500">{dynamicsData[dynamicsData.length - 1]?.date}</span>
+        </div>
+      </div>
+      
+      {/* Funnel */}
+      <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
+        <h3 className="text-lg font-medium text-white mb-4">Воронка</h3>
+        <div className="space-y-3">
+          {Object.entries(STATUSES).map(([key, { label, color }]) => {
+            const count = statusCounts[key] || 0;
+            const pct = total > 0 ? Math.round(count / total * 100) : 0;
+            return (
+              <div key={key} className="flex items-center gap-3">
+                <div className="w-28 md:w-36 text-zinc-400 text-sm truncate">{label}</div>
+                <div className="flex-1 bg-zinc-800 rounded-full h-4 overflow-hidden">
+                  <div className={`h-full ${color} transition-all duration-500`} style={{ width: pct + '%' }} />
+                </div>
+                <div className="w-12 text-right text-white text-sm font-medium">{count}</div>
+                <div className="w-12 text-right text-zinc-500 text-sm">{pct}%</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      
+      {/* Expert Stats (якщо вибрано всіх) */}
+      {selectedExpert === 'all' && selectedBot === 'all' && experts.length > 0 && (
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
+          <h3 className="text-lg font-medium text-white mb-4">По експертах</h3>
+          <div className="space-y-3">
+            {expertStats.map(expert => (
+              <div key={expert.id} className="bg-black/50 rounded-xl p-4 cursor-pointer hover:bg-black/70 transition" onClick={() => handleExpertChange(expert.id)}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-white font-bold">{expert.name?.[0]}</div>
+                    <div>
+                      <span className="text-white font-medium">{expert.name}</span>
+                      <div className="text-xs text-zinc-500">{expert.botsCount} ботів</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="text-right">
+                      <div className="text-white font-bold">{expert.uniqueClients}</div>
+                      <div className="text-xs text-zinc-500">клієнтів</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-emerald-400 font-bold">{expert.conversion}%</div>
+                      <div className="text-xs text-zinc-500">конверсія</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Bot Stats */}
+      {selectedBot === 'all' && botStats.length > 0 && (
+        <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800">
+          <h3 className="text-lg font-medium text-white mb-4">По ботах</h3>
+          <div className="space-y-3">
+            {botStats.map(bot => (
+              <div key={bot.id} className="bg-black/50 rounded-xl p-4 cursor-pointer hover:bg-black/70 transition" onClick={() => setSelectedBot(bot.id)}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">🤖</span>
+                    <div>
+                      <span className="text-white font-medium">@{bot.bot_username}</span>
+                      {selectedExpert === 'all' && <div className="text-xs text-zinc-500">{experts.find(e => e.id === bot.expert_id)?.name}</div>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="text-right">
+                      <div className="text-white font-bold">{bot.clientsCount}</div>
+                      <div className="text-xs text-zinc-500">клієнтів</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-emerald-400 font-bold">{bot.conversion}%</div>
+                      <div className="text-xs text-zinc-500">конверсія</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {Object.entries(STATUSES).map(([key, { label, color }]) => (
+                    <div key={key} className="flex-1 text-center">
+                      <div className={`text-sm font-medium ${color.replace('bg-', 'text-')}`}>{bot.statusCounts[key]}</div>
+                      <div className="text-xs text-zinc-600 truncate">{label.split(' ')[0]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
