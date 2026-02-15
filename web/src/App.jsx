@@ -883,6 +883,11 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
   const [allClients, setAllClients] = useState([]);
   const [view, setView] = useState('experts');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showAddExpert, setShowAddExpert] = useState(false);
+  const [newExpert, setNewExpert] = useState({ name: '', email: '', password: '' });
+  const [addError, setAddError] = useState('');
+  const [addSuccess, setAddSuccess] = useState('');
+  const [addLoading, setAddLoading] = useState(false);
 
   useEffect(() => { loadExperts(); loadBots(); loadAllClients(); }, []);
 
@@ -899,6 +904,68 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
   const loadAllClients = async () => {
     const { data } = await supabase.from('clients').select('*, experts(name), bots(bot_username)').order('created_at', { ascending: false });
     if (data) setAllClients(data);
+  };
+
+  const handleAddExpert = async () => {
+    if (!newExpert.name || !newExpert.email || !newExpert.password) {
+      setAddError('Заповніть всі поля');
+      return;
+    }
+    
+    setAddLoading(true);
+    setAddError('');
+    setAddSuccess('');
+    
+    try {
+      // Перевіряємо чи email вже існує
+      const { data: existing } = await supabase.from('experts').select('id').eq('email', newExpert.email.toLowerCase());
+      if (existing?.length > 0) {
+        setAddError('Експерт з таким email вже існує');
+        setAddLoading(false);
+        return;
+      }
+      
+      // Створюємо експерта
+      const { data, error } = await supabase.from('experts').insert({
+        name: newExpert.name,
+        email: newExpert.email.toLowerCase(),
+        password_hash: newExpert.password,
+        role: 'expert'
+      }).select();
+      
+      if (error) {
+        setAddError('Помилка: ' + error.message);
+        setAddLoading(false);
+        return;
+      }
+      
+      setAddSuccess(`Експерт ${newExpert.name} успішно створений!`);
+      setNewExpert({ name: '', email: '', password: '' });
+      loadExperts();
+      
+      setTimeout(() => {
+        setShowAddExpert(false);
+        setAddSuccess('');
+      }, 2000);
+      
+    } catch (err) {
+      setAddError('Помилка: ' + err.message);
+    }
+    
+    setAddLoading(false);
+  };
+
+  const handleDeleteExpert = async (expertId, expertName) => {
+    if (!confirm(`Видалити експерта ${expertName}? Це також видалить всіх його ботів та клієнтів.`)) return;
+    
+    // Деактивуємо ботів експерта
+    await supabase.from('bots').update({ is_active: false }).eq('expert_id', expertId);
+    
+    // Видаляємо експерта
+    await supabase.from('experts').delete().eq('id', expertId);
+    
+    loadExperts();
+    loadBots();
   };
 
   const getExpertStats = (expertId) => {
@@ -970,27 +1037,80 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
       <div className="flex-1 overflow-y-auto p-6">
         {view === 'experts' && (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-6">Експерти</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white">Експерти</h2>
+              <button onClick={() => setShowAddExpert(true)} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-xl transition flex items-center gap-2">
+                <span>➕</span> Додати експерта
+              </button>
+            </div>
+            
+            {/* Модалка додавання експерта */}
+            {showAddExpert && (
+              <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-white">Новий експерт</h3>
+                    <button onClick={() => { setShowAddExpert(false); setAddError(''); setAddSuccess(''); }} className="text-zinc-400 hover:text-white text-2xl">×</button>
+                  </div>
+                  
+                  {addError && <div className="mb-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">{addError}</div>}
+                  {addSuccess && <div className="mb-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-sm">{addSuccess}</div>}
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Ім'я</label>
+                      <input type="text" value={newExpert.name} onChange={(e) => setNewExpert({...newExpert, name: e.target.value})} placeholder="Олена Коваленко" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Email (для входу)</label>
+                      <input type="email" value={newExpert.email} onChange={(e) => setNewExpert({...newExpert, email: e.target.value})} placeholder="olena@example.com" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Пароль</label>
+                      <input type="text" value={newExpert.password} onChange={(e) => setNewExpert({...newExpert, password: e.target.value})} placeholder="Мінімум 6 символів" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                    <button onClick={handleAddExpert} disabled={addLoading} className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-semibold rounded-xl transition">
+                      {addLoading ? 'Створюю...' : 'Створити експерта'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {experts.map(expert => {
                 const stats = getExpertStats(expert.id);
                 const expertBots = getExpertBots(expert.id);
                 return (
-                  <div key={expert.id} className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 hover:border-zinc-700 transition cursor-pointer" onClick={() => onSelectExpert(expert)}>
+                  <div key={expert.id} className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 hover:border-zinc-700 transition">
                     <div className="flex items-center gap-4 mb-4">
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-white font-bold text-lg">{expert.name?.[0]}</div>
-                      <div><div className="font-medium text-white">{expert.name}</div><div className="text-sm text-zinc-500">{expert.email}</div></div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-white">{expert.name}</div>
+                        <div className="text-sm text-zinc-500 truncate">{expert.email}</div>
+                      </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-white">{stats.total}</div><div className="text-xs text-zinc-500">Клієнтів</div></div>
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-emerald-400">{stats.conversion}%</div><div className="text-xs text-zinc-500">Конверсія</div></div>
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-sky-400">{expertBots.length}</div><div className="text-xs text-zinc-500">Ботів</div></div>
                     </div>
-                    {expertBots.length > 0 && <div className="flex flex-wrap gap-1">{expertBots.map(b => <span key={b.id} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">@{b.bot_username}</span>)}</div>}
+                    {expertBots.length > 0 && <div className="flex flex-wrap gap-1 mb-4">{expertBots.map(b => <span key={b.id} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">@{b.bot_username}</span>)}</div>}
+                    <div className="flex gap-2">
+                      <button onClick={() => onSelectExpert(expert)} className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Відкрити</button>
+                      <button onClick={() => handleDeleteExpert(expert.id, expert.name)} className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm transition">🗑</button>
+                    </div>
                   </div>
                 );
               })}
             </div>
+            {experts.length === 0 && (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4 opacity-20">👥</div>
+                <div className="text-zinc-500">Експертів поки немає</div>
+                <button onClick={() => setShowAddExpert(true)} className="mt-4 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-xl transition">Додати першого експерта</button>
+              </div>
+            )}
           </div>
         )}
 
