@@ -900,6 +900,11 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
   const [addLoading, setAddLoading] = useState(false);
+  const [editingExpert, setEditingExpert] = useState(null);
+  const [editForm, setEditForm] = useState({ name: '', email: '', password: '' });
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => { loadExperts(); loadBots(); loadAllClients(); }, []);
 
@@ -1034,6 +1039,61 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
 
   const getExpertBots = (expertId) => bots.filter(b => b.expert_id === expertId);
 
+  const handleOpenEditExpert = (expert) => {
+    setEditingExpert(expert);
+    setEditForm({ name: expert.name, email: expert.email, password: expert.password_hash || '' });
+    setEditError('');
+    setEditSuccess('');
+  };
+
+  const handleSaveExpert = async () => {
+    if (!editForm.name || !editForm.email || !editForm.password) {
+      setEditError('Заповніть всі поля');
+      return;
+    }
+    
+    setEditLoading(true);
+    setEditError('');
+    setEditSuccess('');
+    
+    try {
+      // Перевіряємо чи email не зайнятий іншим експертом
+      if (editForm.email.toLowerCase() !== editingExpert.email.toLowerCase()) {
+        const { data: existing } = await supabase.from('experts').select('id').eq('email', editForm.email.toLowerCase()).neq('id', editingExpert.id);
+        if (existing?.length > 0) {
+          setEditError('Експерт з таким email вже існує');
+          setEditLoading(false);
+          return;
+        }
+      }
+      
+      const { error } = await supabase.from('experts').update({
+        name: editForm.name,
+        email: editForm.email.toLowerCase(),
+        password_hash: editForm.password
+      }).eq('id', editingExpert.id);
+      
+      if (error) {
+        setEditError('Помилка: ' + error.message);
+        setEditLoading(false);
+        return;
+      }
+      
+      setEditSuccess('Збережено!');
+      loadExperts();
+      
+      setTimeout(() => {
+        setEditingExpert(null);
+        setEditSuccess('');
+      }, 1500);
+      
+    } catch (err) {
+      setEditError('Помилка: ' + err.message);
+    }
+    
+    setEditLoading(false);
+  };
+
   const totalStats = {
     experts: experts.length,
     bots: bots.length,
@@ -1134,19 +1194,65 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
               </div>
             )}
             
+            {/* Модалка редагування експерта */}
+            {editingExpert && (
+              <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-white">Редагувати експерта</h3>
+                    <button onClick={() => setEditingExpert(null)} className="text-zinc-400 hover:text-white text-2xl">×</button>
+                  </div>
+                  
+                  {editError && <div className="mb-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">{editError}</div>}
+                  {editSuccess && <div className="mb-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-sm">{editSuccess}</div>}
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Ім'я</label>
+                      <input type="text" value={editForm.name} onChange={(e) => setEditForm({...editForm, name: e.target.value})} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Email (для входу)</label>
+                      <input type="email" value={editForm.email} onChange={(e) => setEditForm({...editForm, email: e.target.value})} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+                    </div>
+                    <div>
+                      <label className="text-sm text-zinc-400 mb-2 block">Пароль</label>
+                      <input type="text" value={editForm.password} onChange={(e) => setEditForm({...editForm, password: e.target.value})} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 font-mono" />
+                    </div>
+                    <button onClick={handleSaveExpert} disabled={editLoading} className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-semibold rounded-xl transition">
+                      {editLoading ? 'Зберігаю...' : 'Зберегти'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {experts.map(expert => {
                 const stats = getExpertStats(expert.id);
                 const expertBots = getExpertBots(expert.id);
                 return (
                   <div key={expert.id} className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 hover:border-zinc-700 transition">
-                    <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center gap-4 mb-3">
                       <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-sky-500 flex items-center justify-center text-white font-bold text-lg">{expert.name?.[0]}</div>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-white">{expert.name}</div>
                         <div className="text-sm text-zinc-500 truncate">{expert.email}</div>
                       </div>
                     </div>
+                    
+                    {/* Дані для входу */}
+                    <div className="bg-black/50 rounded-lg p-3 mb-4 text-sm">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-zinc-500">Login:</span>
+                        <span className="text-zinc-300 font-mono">{expert.email}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-zinc-500">Pass:</span>
+                        <span className="text-zinc-300 font-mono">{expert.password_hash || '—'}</span>
+                      </div>
+                    </div>
+                    
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-white">{stats.total}</div><div className="text-xs text-zinc-500">Клієнтів</div></div>
                       <div className="bg-black rounded-lg p-2 text-center"><div className="text-lg font-bold text-emerald-400">{stats.conversion}%</div><div className="text-xs text-zinc-500">Конверсія</div></div>
@@ -1155,6 +1261,7 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
                     {expertBots.length > 0 && <div className="flex flex-wrap gap-1 mb-4">{expertBots.map(b => <span key={b.id} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">@{b.bot_username}</span>)}</div>}
                     <div className="flex gap-2">
                       <button onClick={() => onSelectExpert(expert)} className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Відкрити</button>
+                      <button onClick={() => handleOpenEditExpert(expert)} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg text-sm transition">✏️</button>
                       <button onClick={() => handleDeleteExpert(expert.id, expert.name)} className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm transition">🗑</button>
                     </div>
                   </div>
