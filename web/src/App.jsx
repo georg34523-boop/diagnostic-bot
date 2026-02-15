@@ -974,23 +974,37 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
         await supabase.from('messages').delete().in('client_id', clientIds);
       }
       
-      // 4. Видаляємо нагадування
-      await supabase.from('reminders').delete().eq('expert_id', expertId);
+      // 4. Видаляємо нагадування по client_id
+      if (clientIds.length > 0) {
+        await supabase.from('reminders').delete().in('client_id', clientIds);
+      }
       
-      // 5. Видаляємо шаблони
-      await supabase.from('message_templates').delete().eq('expert_id', expertId);
+      // 5. Видаляємо клієнтів (по bot_id щоб спрацював foreign key)
+      if (botIds.length > 0) {
+        await supabase.from('clients').delete().in('bot_id', botIds);
+      }
       
-      // 6. Видаляємо авторизованих користувачів
-      await supabase.from('authorized_users').delete().eq('expert_id', expertId);
+      // 6. Видаляємо шаблони по bot_id
+      if (botIds.length > 0) {
+        await supabase.from('message_templates').delete().in('bot_id', botIds);
+      }
       
-      // 7. Видаляємо клієнтів
-      await supabase.from('clients').delete().eq('expert_id', expertId);
+      // 7. Видаляємо авторизованих користувачів по bot_id
+      if (botIds.length > 0) {
+        await supabase.from('authorized_users').delete().in('bot_id', botIds);
+      }
       
       // 8. Видаляємо ботів
       await supabase.from('bots').delete().eq('expert_id', expertId);
       
       // 9. Видаляємо експерта
-      await supabase.from('experts').delete().eq('id', expertId);
+      const { error } = await supabase.from('experts').delete().eq('id', expertId);
+      
+      if (error) {
+        console.error('Delete expert error:', error);
+        alert('Помилка: ' + error.message);
+        return;
+      }
       
       loadExperts();
       loadBots();
