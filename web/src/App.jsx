@@ -402,11 +402,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
       const botUsername = telegramData.result.username;
       const botName = telegramData.result.first_name;
       
-      // 2. Перевіряємо чи бот вже існує
-      const { data: existing } = await supabase.from('bots').select('id').eq('bot_token', botToken);
-      if (existing?.length > 0) { setBotError('Цей бот вже зареєстрований'); setBotLoading(false); return; }
-      
-      // 3. Реєструємо бота через Railway API (це також додасть в базу і встановить webhook)
+      // 2. Реєструємо бота через Railway API (він сам перевірить і реактивує якщо потрібно)
       const registerResp = await fetch(`${RAILWAY_API_URL}/api/register-bot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -421,7 +417,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
         return;
       }
       
-      // 4. Отримуємо дані бота з бази
+      // 3. Отримуємо дані бота з бази
       const { data: botData } = await supabase.from('bots').select('*').eq('id', registerData.bot_id).single();
       
       setBotToken('');
