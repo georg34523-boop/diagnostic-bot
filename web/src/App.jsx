@@ -846,6 +846,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
                   ))}
                   <div className="border-t border-zinc-800" />
                   {!isAdminView && <button onClick={() => { onLogout(); setShowMobileMenu(false); }} className="w-full px-4 py-3 text-left flex items-center gap-3 text-red-400 hover:bg-zinc-800"><span>🚪</span><span>Вийти</span></button>}
+                  {isAdminView && <button onClick={() => { onLogout(); setShowMobileMenu(false); }} className="w-full px-4 py-3 text-left flex items-center gap-3 text-zinc-400 hover:bg-zinc-800"><span>←</span><span>До адмін-панелі</span></button>}
                 </div>
               </>
             )}
@@ -853,6 +854,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
         </div>
 
         {!isAdminView && <button onClick={onLogout} className="hidden md:block p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>}
+        {isAdminView && <button onClick={onLogout} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm flex items-center gap-2 transition"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>До адмін-панелі</button>}
       </nav>
       
       <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -956,16 +958,47 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
   };
 
   const handleDeleteExpert = async (expertId, expertName) => {
-    if (!confirm(`Видалити експерта ${expertName}? Це також видалить всіх його ботів та клієнтів.`)) return;
+    if (!confirm(`Видалити експерта ${expertName}? Це також видалить всіх його ботів, клієнтів та дані.`)) return;
     
-    // Деактивуємо ботів експерта
-    await supabase.from('bots').update({ is_active: false }).eq('expert_id', expertId);
-    
-    // Видаляємо експерта
-    await supabase.from('experts').delete().eq('id', expertId);
-    
-    loadExperts();
-    loadBots();
+    try {
+      // 1. Отримуємо всіх ботів експерта
+      const { data: expertBots } = await supabase.from('bots').select('id').eq('expert_id', expertId);
+      const botIds = expertBots?.map(b => b.id) || [];
+      
+      // 2. Отримуємо всіх клієнтів експерта
+      const { data: expertClients } = await supabase.from('clients').select('id').eq('expert_id', expertId);
+      const clientIds = expertClients?.map(c => c.id) || [];
+      
+      // 3. Видаляємо повідомлення клієнтів
+      if (clientIds.length > 0) {
+        await supabase.from('messages').delete().in('client_id', clientIds);
+      }
+      
+      // 4. Видаляємо нагадування
+      await supabase.from('reminders').delete().eq('expert_id', expertId);
+      
+      // 5. Видаляємо шаблони
+      await supabase.from('message_templates').delete().eq('expert_id', expertId);
+      
+      // 6. Видаляємо авторизованих користувачів
+      await supabase.from('authorized_users').delete().eq('expert_id', expertId);
+      
+      // 7. Видаляємо клієнтів
+      await supabase.from('clients').delete().eq('expert_id', expertId);
+      
+      // 8. Видаляємо ботів
+      await supabase.from('bots').delete().eq('expert_id', expertId);
+      
+      // 9. Видаляємо експерта
+      await supabase.from('experts').delete().eq('id', expertId);
+      
+      loadExperts();
+      loadBots();
+      loadAllClients();
+    } catch (err) {
+      console.error('Error deleting expert:', err);
+      alert('Помилка при видаленні: ' + err.message);
+    }
   };
 
   const getExpertStats = (expertId) => {
