@@ -432,6 +432,17 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
 
   const handleDeleteBot = async (botId) => {
     if (!confirm('Видалити бота?')) return;
+    
+    try {
+      // 1. Викликаємо Railway API щоб видалити з пам'яті і webhook
+      await fetch(`${RAILWAY_API_URL}/api/bot/${botId}`, {
+        method: 'DELETE'
+      });
+    } catch (err) {
+      console.error('Failed to delete bot from Railway:', err);
+    }
+    
+    // 2. Оновлюємо в базі
     await supabase.from('bots').update({ is_active: false }).eq('id', botId);
     onBotDeleted(botId);
   };
