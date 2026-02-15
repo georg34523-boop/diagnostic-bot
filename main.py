@@ -75,7 +75,7 @@ async def register_webhook(bot: Bot, bot_token: str):
         return False
 
 
-async def verify_payment_token(token: str, telegram_id: int, expert_id: str) -> dict:
+async def verify_payment_token(token: str, telegram_id: int, bot_id: str) -> dict:
     """Перевірка і активація токена оплати"""
     result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
     
@@ -105,28 +105,33 @@ async def verify_payment_token(token: str, telegram_id: int, expert_id: str) -> 
     return {"success": True, "data": token_data}
 
 
-async def is_authorized(username: str, telegram_id: int, expert_id: str) -> bool:
-    """Перевірка авторизації користувача для конкретного експерта"""
+async def is_authorized(username: str, telegram_id: int, bot_id: str) -> bool:
+    """Перевірка авторизації користувача для конкретного бота"""
     if telegram_id:
         result = supabase.table("authorized_users").select("id").eq(
             "telegram_id", telegram_id
-        ).eq("expert_id", expert_id).execute()
+        ).eq("bot_id", bot_id).execute()
         if result.data:
             return True
     
     if username:
         result = supabase.table("authorized_users").select("id").eq(
             "telegram_username", username.lower()
-        ).eq("expert_id", expert_id).execute()
+        ).eq("bot_id", bot_id).execute()
         if result.data:
+            # Оновлюємо telegram_id якщо його не було
+            if telegram_id:
+                supabase.table("authorized_users").update({"telegram_id": telegram_id}).eq(
+                    "telegram_username", username.lower()
+                ).eq("bot_id", bot_id).execute()
             return True
     
     return False
 
 
-async def authorize_user(telegram_id: int, expert_id: str, username: str = None, email: str = None, phone: str = None):
+async def authorize_user(telegram_id: int, bot_id: str, expert_id: str, username: str = None, email: str = None, phone: str = None):
     """Додати користувача до авторизованих"""
-    if await is_authorized(username, telegram_id, expert_id):
+    if await is_authorized(username, telegram_id, bot_id):
         return
     
     user_data = {
@@ -134,16 +139,17 @@ async def authorize_user(telegram_id: int, expert_id: str, username: str = None,
         "telegram_username": username.lower() if username else None,
         "email": email,
         "phone": phone,
+        "bot_id": bot_id,
         "expert_id": expert_id
     }
     supabase.table("authorized_users").insert(user_data).execute()
 
 
-async def get_or_create_client(user: types.User, expert_id: str, email: str = None, phone: str = None) -> dict:
-    """Отримати або створити клієнта для конкретного експерта"""
+async def get_or_create_client(user: types.User, bot_id: str, expert_id: str, email: str = None, phone: str = None) -> dict:
+    """Отримати або створити клієнта для конкретного бота"""
     result = supabase.table("clients").select("*").eq(
         "telegram_id", user.id
-    ).eq("expert_id", expert_id).execute()
+    ).eq("bot_id", bot_id).execute()
     
     if result.data:
         if email or phone:
@@ -153,7 +159,7 @@ async def get_or_create_client(user: types.User, expert_id: str, email: str = No
             if phone:
                 update_data["phone"] = phone
             if update_data:
-                supabase.table("clients").update(update_data).eq("telegram_id", user.id).eq("expert_id", expert_id).execute()
+                supabase.table("clients").update(update_data).eq("telegram_id", user.id).eq("bot_id", bot_id).execute()
         return result.data[0]
     
     new_client = {
@@ -164,6 +170,7 @@ async def get_or_create_client(user: types.User, expert_id: str, email: str = No
         "status": "new",
         "email": email,
         "phone": phone,
+        "bot_id": bot_id,
         "expert_id": expert_id
     }
     result = supabase.table("clients").insert(new_client).execute()
@@ -202,7 +209,7 @@ async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
 
 # ==================== BOT HANDLERS FACTORY ====================
 
-def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str, welcome_message: str):
+def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, expert_id: str, welcome_message: str):
     """Створити обробники для конкретного бота"""
     
     @dp.message(CommandStart())
@@ -212,13 +219,13 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
         
         if command.args and command.args.startswith("pay_"):
             token = command.args
-            result = await verify_payment_token(token, telegram_id, expert_id)
+            result = await verify_payment_token(token, telegram_id, bot_id)
             
             if result["success"]:
                 email = result["data"].get("email")
                 phone = result["data"].get("phone")
-                await authorize_user(telegram_id, expert_id, username, email, phone)
-                await get_or_create_client(message.from_user, expert_id, email, phone)
+                await authorize_user(telegram_id, bot_id, expert_id, username, email, phone)
+                await get_or_create_client(message.from_user, bot_id, expert_id, email, phone)
                 
                 await message.answer(welcome_message or 
                     "👋 Вітаю! Дякую, що записались на діагностику 🤍\n\n"
@@ -230,7 +237,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
                 await message.answer(f"❌ {result['error']}\n\nЯкщо виникли проблеми, напишіть в підтримку.")
                 return
         
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer(
                 "👋 Вітаю!\n\n"
                 "На жаль, у вас поки немає доступу.\n\n"
@@ -238,7 +245,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
             )
             return
         
-        await get_or_create_client(message.from_user, expert_id)
+        await get_or_create_client(message.from_user, bot_id, expert_id)
         await message.answer(welcome_message or "👋 Вітаю! Надішліть фото для діагностики 📸")
 
     @dp.message(Command("help"))
@@ -249,10 +256,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_photo(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         file_bytes = await bot.download_file(file.file_path)
@@ -264,10 +271,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_video(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         video = message.video
         file = await bot.get_file(video.file_id)
         file_bytes = await bot.download_file(file.file_path)
@@ -279,10 +286,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_voice(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         voice = message.voice
         file = await bot.get_file(voice.file_id)
         file_bytes = await bot.download_file(file.file_path)
@@ -294,10 +301,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_video_note(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         video_note = message.video_note
         file = await bot.get_file(video_note.file_id)
         file_bytes = await bot.download_file(file.file_path)
@@ -309,10 +316,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_document(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         document = message.document
         file = await bot.get_file(document.file_id)
         file_bytes = await bot.download_file(file.file_path)
@@ -324,16 +331,17 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, expert_id: str
     async def handle_text(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
-        if not await is_authorized(username, telegram_id, expert_id):
+        if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
-        client = await get_or_create_client(message.from_user, expert_id)
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
         await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text)
 
 
 async def initialize_bot(bot_data: dict) -> bool:
     """Ініціалізувати одного бота"""
     bot_token = bot_data["bot_token"]
+    bot_id = bot_data["id"]
     expert_id = bot_data["expert_id"]
     welcome_message = bot_data.get("welcome_message", "")
     
@@ -344,13 +352,13 @@ async def initialize_bot(bot_data: dict) -> bool:
     try:
         bot = Bot(token=bot_token)
         dp = Dispatcher()
-        create_bot_handlers(bot, dp, bot_token, expert_id, welcome_message)
+        create_bot_handlers(bot, dp, bot_token, bot_id, expert_id, welcome_message)
         await register_webhook(bot, bot_token)
         
         active_bots[bot_token] = {
             "bot": bot,
             "dp": dp,
-            "bot_id": bot_data["id"],
+            "bot_id": bot_id,
             "expert_id": expert_id
         }
         
