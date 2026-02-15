@@ -809,14 +809,19 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   return (
     <div className="h-screen bg-black flex flex-col overflow-hidden">
-      <nav className="bg-zinc-950 border-b border-zinc-800 px-4 py-3 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4 min-w-0">
+      <nav className="bg-zinc-950 border-b border-zinc-800 px-3 md:px-4 py-3 flex items-center justify-between gap-2 md:gap-4">
+        {/* Logo - тільки на десктопі */}
+        <div className="hidden md:block">
           <Logo />
+        </div>
+        
+        {/* Bot Selector - завжди видимий */}
+        <div className="flex-1 md:flex-none min-w-0">
           <BotSelector bots={bots} activeBot={activeBot} onSelectBot={handleSelectBot} onAddBot={() => setActiveTab('settings')} />
         </div>
         
         {/* Desktop tabs */}
-        <div className="hidden md:flex items-center gap-1">
+        <div className="hidden md:flex items-center gap-1 flex-1 justify-center">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id === 'chat') setShowClientList(true); }} className={`px-4 py-2 rounded-lg flex items-center gap-2 transition ${activeTab === tab.id ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white'}`}>
               <span>{tab.icon}</span>
@@ -826,14 +831,18 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
           ))}
         </div>
 
-        {/* Mobile */}
-        <div className="flex items-center gap-2 md:hidden">
-          <button onClick={() => { setActiveTab('chat'); setShowClientList(true); }} className="relative p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
-            <span className="text-xl">💬</span>
-            {unreadDialogs > 0 && <span className="absolute -top-1 -right-1 bg-emerald-500 text-black text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">{unreadDialogs}</span>}
-          </button>
+        {/* Mobile menu button */}
+        <div className="flex items-center gap-1 md:hidden">
+          {unreadDialogs > 0 && (
+            <button onClick={() => { setActiveTab('chat'); setShowClientList(true); }} className="relative p-2 hover:bg-zinc-800 rounded-lg">
+              <span className="text-lg">💬</span>
+              <span className="absolute -top-1 -right-1 bg-emerald-500 text-black text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">{unreadDialogs}</span>
+            </button>
+          )}
           <div className="relative">
-            <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg></button>
+            <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
             {showMobileMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMobileMenu(false)} />
@@ -853,8 +862,9 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
           </div>
         </div>
 
+        {/* Desktop logout/back button */}
         {!isAdminView && <button onClick={onLogout} className="hidden md:block p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>}
-        {isAdminView && <button onClick={onLogout} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm flex items-center gap-2 transition"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>До адмін-панелі</button>}
+        {isAdminView && <button onClick={onLogout} className="hidden md:flex px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm items-center gap-2 transition"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>До адмін-панелі</button>}
       </nav>
       
       <div className="flex-1 flex min-h-0 overflow-hidden">
