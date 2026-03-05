@@ -149,7 +149,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
 };
 
 // ==================== CHAT WINDOW ====================
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
@@ -160,6 +160,11 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [templateFilter, setTemplateFilter] = useState('all');
+  const [salesComment, setSalesComment] = useState('');
+  const [showSalesModal, setShowSalesModal] = useState(false);
+  const [sendingSales, setSendingSales] = useState(false);
+  const [salesSuccess, setSalesSuccess] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -174,6 +179,59 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage); setNewMessage(''); };
   const handleKeyPress = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const handleFileSelect = async (e) => { const file = e.target.files?.[0]; if (!file) return; setUploading(true); try { await onSendFile(file); } catch (err) { alert('Помилка'); } setUploading(false); e.target.value = ''; };
+  
+  const handleSelectTemplate = async (template) => {
+    setShowTemplates(false);
+    if (template.type === 'text') {
+      onSendTemplate(template.content);
+    } else if (template.file_url) {
+      // Відправляємо медіа шаблон
+      setUploading(true);
+      try {
+        await onSendFile(null, template.type, template.file_url, template.content);
+      } catch (err) {
+        alert('Помилка');
+      }
+      setUploading(false);
+    }
+  };
+  
+  const handleSendToSales = async () => {
+    if (!googleSheetUrl) {
+      alert('URL Google таблиці не налаштовано. Додайте його в налаштуваннях бота.');
+      return;
+    }
+    
+    setSendingSales(true);
+    try {
+      const data = {
+        name: `${client.first_name || ''} ${client.last_name || ''}`.trim(),
+        phone: client.phone || '',
+        username: client.telegram_username || '',
+        email: client.email || '',
+        status: STATUSES[client.status]?.label || client.status,
+        comment: salesComment,
+        date: new Date().toLocaleString('uk-UA')
+      };
+      
+      const response = await fetch(googleSheetUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      
+      setSalesSuccess(true);
+      setSalesComment('');
+      setTimeout(() => {
+        setShowSalesModal(false);
+        setSalesSuccess(false);
+      }, 2000);
+    } catch (err) {
+      alert('Помилка: ' + err.message);
+    }
+    setSendingSales(false);
+  };
   
   const startRecording = async () => {
     try {
@@ -242,7 +300,24 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {showTemplates && templates?.length > 0 && <div className="bg-zinc-900 rounded-xl p-2 max-h-40 overflow-y-auto">{templates.map(t => <button key={t.id} onClick={() => { onSendTemplate(t.content); setShowTemplates(false); }} className="w-full text-left px-3 py-2 hover:bg-zinc-800 rounded-lg text-white text-sm"><div className="font-medium">{t.title}</div></button>)}</div>}
+              {showTemplates && templates?.length > 0 && (
+                <div className="bg-zinc-900 rounded-xl p-3 max-h-60 overflow-y-auto">
+                  <div className="flex gap-1 mb-2 pb-2 border-b border-zinc-800 overflow-x-auto">
+                    <button onClick={() => setTemplateFilter('all')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'all' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>Всі</button>
+                    <button onClick={() => setTemplateFilter('text')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'text' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📝</button>
+                    <button onClick={() => setTemplateFilter('voice')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'voice' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>🎤</button>
+                    <button onClick={() => setTemplateFilter('video_note')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'video_note' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>⭕</button>
+                    <button onClick={() => setTemplateFilter('photo')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'photo' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📷</button>
+                    <button onClick={() => setTemplateFilter('video')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'video' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>🎬</button>
+                  </div>
+                  {templates.filter(t => templateFilter === 'all' || t.type === templateFilter).map(t => (
+                    <button key={t.id} onClick={() => handleSelectTemplate(t)} className="w-full text-left px-3 py-2 hover:bg-zinc-800 rounded-lg text-white text-sm flex items-center gap-3">
+                      <span className="text-lg">{t.type === 'voice' ? '🎤' : t.type === 'video_note' ? '⭕' : t.type === 'photo' ? '📷' : t.type === 'video' ? '🎬' : '📝'}</span>
+                      <span className="truncate">{t.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
                 <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="p-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 rounded-xl transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg></button>
@@ -261,12 +336,60 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
           {isMobile && <div className="p-4 border-b border-zinc-800 flex justify-between items-center"><span className="font-medium text-white">Інформація</span><button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-zinc-800 rounded text-zinc-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>}
           <div className="flex-1 overflow-y-auto p-4 space-y-5">
             <div><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Контакт</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-zinc-500">Telegram</span><span className="text-white">@{client.telegram_username || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Телефон</span><span className="text-white">{client.phone || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Email</span><span className="text-white">{client.email || '—'}</span></div></div></div>
+            
+            {/* Передати в продажі */}
+            <div>
+              <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Продажі</h3>
+              <button onClick={() => setShowSalesModal(true)} className="w-full px-4 py-3 bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 text-white font-medium rounded-xl transition flex items-center justify-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                Передати в продажі
+              </button>
+            </div>
+            
             <div><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Нотатки</h3><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Додати..." rows={3} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm resize-none" /><button onClick={() => onNotesChange(notes)} className="mt-2 w-full px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-sm transition">Зберегти</button></div>
             <div><div className="flex items-center justify-between mb-3"><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Нагадування</h3><button onClick={() => setShowReminder(!showReminder)} className="text-emerald-400 text-xs">+ Додати</button></div>{showReminder && <div className="bg-zinc-900 rounded-lg p-3 space-y-2"><input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст" className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm" /><input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 text-sm" /><button onClick={handleAddReminderSubmit} className="w-full px-3 py-2 bg-white text-black font-medium rounded-lg text-sm">Додати</button></div>}</div>
           </div>
         </div>
       )}
       {isMobile && showSidebar && <div className="absolute inset-0 bg-black/60 z-10" onClick={() => setShowSidebar(false)} />}
+      
+      {/* Модалка передачі в продажі */}
+      {showSalesModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-white">Передати в продажі</h3>
+              <button onClick={() => setShowSalesModal(false)} className="text-zinc-400 hover:text-white text-2xl">×</button>
+            </div>
+            
+            {salesSuccess ? (
+              <div className="text-center py-8">
+                <div className="text-5xl mb-4">✅</div>
+                <div className="text-white font-medium">Успішно передано!</div>
+              </div>
+            ) : (
+              <>
+                <div className="bg-black/50 rounded-xl p-4 mb-4 space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-zinc-500">Ім'я:</span><span className="text-white">{client.first_name} {client.last_name}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Telegram:</span><span className="text-white">@{client.telegram_username || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Телефон:</span><span className="text-white">{client.phone || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Email:</span><span className="text-white">{client.email || '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-zinc-500">Статус:</span><span className="text-white">{STATUSES[client.status]?.label}</span></div>
+                </div>
+                
+                <div className="mb-4">
+                  <label className="text-sm text-zinc-400 mb-2 block">Коментар для відділу продажів</label>
+                  <textarea value={salesComment} onChange={(e) => setSalesComment(e.target.value)} placeholder="Додайте коментар..." rows={3} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500 resize-none" />
+                </div>
+                
+                <button onClick={handleSendToSales} disabled={sendingSales} className="w-full py-3 bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-600 hover:to-purple-600 disabled:from-zinc-700 disabled:to-zinc-700 text-white font-semibold rounded-xl transition">
+                  {sendingSales ? 'Надсилаю...' : 'Надіслати'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -506,18 +629,150 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
 const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const handleAdd = () => { if (!title || !content) return; onAddTemplate({ title, content }); setTitle(''); setContent(''); };
+  const [type, setType] = useState('text');
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [filter, setFilter] = useState('all');
+  const fileInputRef = useRef(null);
+  
+  const types = [
+    { value: 'text', label: 'Текст', icon: '📝' },
+    { value: 'voice', label: 'Голосове', icon: '🎤' },
+    { value: 'video_note', label: 'Кружок', icon: '⭕' },
+    { value: 'photo', label: 'Фото', icon: '📷' },
+    { value: 'video', label: 'Відео', icon: '🎬' }
+  ];
+  
+  const handleFileSelect = (e) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) setFile(selectedFile);
+  };
+  
+  const handleAdd = async () => {
+    if (!title) return;
+    if (type === 'text' && !content) return;
+    if (type !== 'text' && !file) return;
+    
+    setUploading(true);
+    try {
+      let fileUrl = null;
+      if (file) {
+        const fileName = `templates/${Date.now()}_${file.name}`;
+        const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, file);
+        if (error) throw error;
+        const { data: urlData } = supabase.storage.from('diagnostic-files').getPublicUrl(fileName);
+        fileUrl = urlData.publicUrl;
+      }
+      
+      await onAddTemplate({ 
+        title, 
+        content: type === 'text' ? content : title,
+        type,
+        file_url: fileUrl
+      });
+      
+      setTitle('');
+      setContent('');
+      setType('text');
+      setFile(null);
+    } catch (err) {
+      alert('Помилка: ' + err.message);
+    }
+    setUploading(false);
+  };
+  
+  const filteredTemplates = filter === 'all' ? templates : templates.filter(t => t.type === filter);
+  
+  const getTypeIcon = (t) => types.find(x => x.value === t)?.icon || '📝';
+  
   return (
-    <div className="flex-1 overflow-y-auto bg-black p-6">
+    <div className="flex-1 overflow-y-auto bg-black p-4 md:p-6">
       <h2 className="text-2xl font-bold text-white mb-6">Шаблони</h2>
-      <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
+      
+      {/* Форма додавання */}
+      <div className="bg-zinc-900 rounded-2xl p-4 md:p-6 border border-zinc-800 mb-6">
         <div className="space-y-4">
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Назва" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
-          <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Текст повідомлення" rows={3} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none" />
-          <button onClick={handleAdd} className="px-6 py-3 bg-white text-black font-medium rounded-xl">Додати</button>
+          {/* Тип шаблону */}
+          <div>
+            <label className="text-sm text-zinc-400 mb-2 block">Тип</label>
+            <div className="flex flex-wrap gap-2">
+              {types.map(t => (
+                <button key={t.value} onClick={() => { setType(t.value); setFile(null); }} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${type === t.value ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
+                  <span>{t.icon}</span><span className="hidden sm:inline">{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          {/* Назва */}
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Назва шаблону" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+          
+          {/* Контент залежно від типу */}
+          {type === 'text' ? (
+            <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Текст повідомлення" rows={3} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none" />
+          ) : (
+            <div>
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept={type === 'voice' ? 'audio/*' : type === 'photo' ? 'image/*' : 'video/*'} className="hidden" />
+              <button onClick={() => fileInputRef.current?.click()} className="w-full px-4 py-6 bg-black border border-dashed border-zinc-700 rounded-xl text-zinc-400 hover:border-emerald-500 hover:text-emerald-400 transition flex flex-col items-center gap-2">
+                {file ? (
+                  <>
+                    <span className="text-2xl">✓</span>
+                    <span className="text-sm truncate max-w-full">{file.name}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-2xl">{getTypeIcon(type)}</span>
+                    <span className="text-sm">Натисніть щоб вибрати файл</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+          
+          <button onClick={handleAdd} disabled={uploading || !title || (type === 'text' ? !content : !file)} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl transition">
+            {uploading ? 'Завантаження...' : 'Додати шаблон'}
+          </button>
         </div>
       </div>
-      <div className="space-y-3">{templates.map(t => <div key={t.id} className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 flex justify-between items-start gap-4"><div><div className="font-medium text-white">{t.title}</div><div className="text-zinc-500 text-sm mt-1">{t.content}</div></div><button onClick={() => onDeleteTemplate(t.id)} className="text-red-400 text-sm">×</button></div>)}{templates.length === 0 && <div className="text-center text-zinc-600 py-12">Немає шаблонів</div>}</div>
+      
+      {/* Фільтр */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm ${filter === 'all' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400'}`}>
+          Всі ({templates.length})
+        </button>
+        {types.map(t => {
+          const count = templates.filter(x => x.type === t.value).length;
+          if (count === 0) return null;
+          return (
+            <button key={t.value} onClick={() => setFilter(t.value)} className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-1 ${filter === t.value ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400'}`}>
+              <span>{t.icon}</span><span>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+      
+      {/* Список шаблонів */}
+      <div className="space-y-3">
+        {filteredTemplates.map(t => (
+          <div key={t.id} className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 flex items-start gap-4">
+            <div className="text-2xl">{getTypeIcon(t.type || 'text')}</div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-white">{t.title}</div>
+              {t.type === 'text' && <div className="text-zinc-500 text-sm mt-1 line-clamp-2">{t.content}</div>}
+              {t.type === 'voice' && t.file_url && <audio src={t.file_url} controls className="mt-2 h-8" />}
+              {t.type === 'video_note' && t.file_url && <video src={t.file_url} controls className="mt-2 w-24 h-24 rounded-full object-cover" />}
+              {t.type === 'photo' && t.file_url && <img src={t.file_url} alt="" className="mt-2 max-w-32 rounded-lg" />}
+              {t.type === 'video' && t.file_url && <video src={t.file_url} controls className="mt-2 max-w-48 rounded-lg" />}
+            </div>
+            <button onClick={() => onDeleteTemplate(t.id)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+          </div>
+        ))}
+        {filteredTemplates.length === 0 && (
+          <div className="text-center text-zinc-600 py-12">
+            {filter === 'all' ? 'Немає шаблонів' : 'Немає шаблонів цього типу'}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -575,9 +830,17 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const [botSuccess, setBotSuccess] = useState('');
   const [editingBot, setEditingBot] = useState(null);
   const [welcomeMessage, setWelcomeMessage] = useState('');
+  const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [username, setUsername] = useState('');
 
   const RAILWAY_API_URL = 'https://diagnostic-bot-production.up.railway.app';
+  
+  useEffect(() => {
+    if (editingBot) {
+      setWelcomeMessage(editingBot.welcome_message || '');
+      setGoogleSheetUrl(editingBot.google_sheet_url || '');
+    }
+  }, [editingBot]);
 
   const handleRegisterBot = async () => {
     if (!botToken.trim()) { setBotError('Введіть токен бота'); return; }
@@ -638,8 +901,11 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
 
   const handleSaveWelcome = async () => {
     if (!editingBot) return;
-    await supabase.from('bots').update({ welcome_message: welcomeMessage }).eq('id', editingBot.id);
-    onBotUpdated({ ...editingBot, welcome_message: welcomeMessage });
+    await supabase.from('bots').update({ 
+      welcome_message: welcomeMessage,
+      google_sheet_url: googleSheetUrl 
+    }).eq('id', editingBot.id);
+    onBotUpdated({ ...editingBot, welcome_message: welcomeMessage, google_sheet_url: googleSheetUrl });
     setEditingBot(null); setBotSuccess('Збережено!');
   };
 
@@ -669,13 +935,14 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
                       <span className={`w-2 h-2 rounded-full ${bot.webhook_set ? 'bg-emerald-500' : 'bg-yellow-500'}`}></span>
                       <span className="text-xs text-zinc-500">{bot.webhook_set ? 'Активний' : 'Очікує'}</span>
                       {activeBot?.id === bot.id && <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full ml-2">Поточний</span>}
+                      {bot.google_sheet_url && <span className="text-xs bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full">📊 Google</span>}
                     </div>
                   </div>
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
                   <a href={`https://t.me/${bot.bot_username}`} target="_blank" className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Відкрити бота</a>
-                  <button onClick={() => { setEditingBot(bot); setWelcomeMessage(bot.welcome_message || ''); }} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Налаштувати</button>
+                  <button onClick={() => { setEditingBot(bot); setWelcomeMessage(bot.welcome_message || ''); setGoogleSheetUrl(bot.google_sheet_url || ''); }} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Налаштувати</button>
                   <button onClick={() => handleDeleteBot(bot.id)} className="px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/20 transition">Видалити</button>
                 </div>
               </div>
@@ -685,7 +952,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
           {/* Модалка редагування */}
           {editingBot && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-              <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800">
+              <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800 max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-bold text-white">@{editingBot.bot_username}</h3>
                   <button onClick={() => setEditingBot(null)} className="text-zinc-400 hover:text-white">✕</button>
@@ -694,6 +961,11 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
                   <div>
                     <label className="text-sm text-zinc-400 mb-2 block">Привітальне повідомлення</label>
                     <textarea value={welcomeMessage} onChange={(e) => setWelcomeMessage(e.target.value)} rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none" placeholder="Вітаю! Надішліть фото..." />
+                  </div>
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-2 block">Google Apps Script URL (для передачі в продажі)</label>
+                    <input type="url" value={googleSheetUrl} onChange={(e) => setGoogleSheetUrl(e.target.value)} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500" placeholder="https://script.google.com/macros/s/..." />
+                    <p className="text-xs text-zinc-600 mt-2">URL веб-додатку Google Apps Script для інтеграції з таблицею</p>
                   </div>
                   <button onClick={handleSaveWelcome} className="w-full py-3 bg-white text-black font-medium rounded-xl">Зберегти</button>
                 </div>
@@ -891,15 +1163,24 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     loadMessages(selectedClient.id);
   };
 
-  const handleSendFile = async (file, type = null) => {
+  const handleSendFile = async (file, type = null, templateUrl = null, caption = null) => {
     if (!selectedClient) return;
-    const ext = file.name.split('.').pop();
-    const fileName = `${selectedClient.telegram_id}_${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from('diagnostic-files').upload(`uploads/${fileName}`, file);
-    if (error) throw error;
-    const { data: { publicUrl } } = supabase.storage.from('diagnostic-files').getPublicUrl(`uploads/${fileName}`);
-    let contentType = type || (file.type.startsWith('image/') ? 'photo' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'voice' : 'document');
-    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: contentType, file_url: publicUrl, file_name: file.name, is_read: false });
+    
+    let publicUrl = templateUrl;
+    let fileName = caption || 'Медіа';
+    
+    // Якщо це файл, а не шаблон - завантажуємо
+    if (file) {
+      const ext = file.name.split('.').pop();
+      fileName = `${selectedClient.telegram_id}_${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('diagnostic-files').upload(`uploads/${fileName}`, file);
+      if (error) throw error;
+      const { data: { publicUrl: url } } = supabase.storage.from('diagnostic-files').getPublicUrl(`uploads/${fileName}`);
+      publicUrl = url;
+    }
+    
+    let contentType = type || (file?.type?.startsWith('image/') ? 'photo' : file?.type?.startsWith('video/') ? 'video' : file?.type?.startsWith('audio/') ? 'voice' : 'document');
+    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: contentType, file_url: publicUrl, file_name: fileName, is_read: false });
     loadMessages(selectedClient.id);
   };
 
@@ -1063,7 +1344,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
               <ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} />
             </div>
             <div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} />
+              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} />
             </div>
           </>
         )}
