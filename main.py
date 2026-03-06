@@ -471,7 +471,47 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    video_file = BufferedInputFile(video_data, filename="video_note.mp4")
+                                    
+                                    # Конвертуємо в MP4 H.264 через FFmpeg
+                                    import subprocess
+                                    import tempfile
+                                    import os
+                                    
+                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as input_file:
+                                        input_file.write(video_data)
+                                        input_path = input_file.name
+                                    
+                                    output_path = input_path.replace('.webm', '.mp4')
+                                    
+                                    try:
+                                        # FFmpeg конвертація в MP4 H.264 + AAC, квадратне відео 384x384
+                                        process = subprocess.run([
+                                            'ffmpeg', '-y', '-i', input_path,
+                                            '-vf', 'scale=384:384:force_original_aspect_ratio=increase,crop=384:384',
+                                            '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+                                            '-c:a', 'aac', '-b:a', '128k',
+                                            '-movflags', '+faststart',
+                                            '-t', '60',
+                                            output_path
+                                        ], capture_output=True, timeout=60)
+                                        
+                                        if process.returncode == 0 and os.path.exists(output_path):
+                                            with open(output_path, 'rb') as f:
+                                                mp4_data = f.read()
+                                            video_file = BufferedInputFile(mp4_data, filename="video_note.mp4")
+                                        else:
+                                            logger.warning(f"FFmpeg video conversion failed: {process.stderr.decode()}")
+                                            video_file = BufferedInputFile(video_data, filename="video_note.mp4")
+                                    except Exception as conv_err:
+                                        logger.warning(f"FFmpeg video conversion error: {conv_err}")
+                                        video_file = BufferedInputFile(video_data, filename="video_note.mp4")
+                                    finally:
+                                        # Cleanup temp files
+                                        if os.path.exists(input_path):
+                                            os.unlink(input_path)
+                                        if os.path.exists(output_path):
+                                            os.unlink(output_path)
+                                    
                                     await bot.send_video_note(telegram_id, video_file)
                     
                     supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
