@@ -149,7 +149,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
 };
 
 // ==================== CHAT WINDOW ====================
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
@@ -164,6 +164,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [sendingSales, setSendingSales] = useState(false);
   const [salesSuccess, setSalesSuccess] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   
   // Recording states
   const [recordingMode, setRecordingMode] = useState('audio'); // 'audio' або 'video'
@@ -391,6 +392,13 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   };
 
   const handleAddReminderSubmit = () => { if (!reminderText || !reminderDate) return; onAddReminder(reminderText, reminderDate); setReminderText(''); setReminderDate(''); setShowReminder(false); };
+  
+  const handleDeleteClient = async () => {
+    if (onDeleteClient) {
+      await onDeleteClient(client.id);
+    }
+    setShowDeleteModal(false);
+  };
 
   return (
     <div className="flex-1 flex bg-black relative min-w-0 overflow-hidden">
@@ -657,10 +665,53 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
             
             <div><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Нотатки</h3><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Додати..." rows={3} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm resize-none" /><button onClick={() => onNotesChange(notes)} className="mt-2 w-full px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-sm transition">Зберегти</button></div>
             <div><div className="flex items-center justify-between mb-3"><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Нагадування</h3><button onClick={() => setShowReminder(!showReminder)} className="text-emerald-400 text-xs">+ Додати</button></div>{showReminder && <div className="bg-zinc-900 rounded-lg p-3 space-y-2"><input type="text" value={reminderText} onChange={(e) => setReminderText(e.target.value)} placeholder="Текст" className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm" /><input type="datetime-local" value={reminderDate} onChange={(e) => setReminderDate(e.target.value)} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 text-sm" /><button onClick={handleAddReminderSubmit} className="w-full px-3 py-2 bg-white text-black font-medium rounded-lg text-sm">Додати</button></div>}</div>
+            
+            {/* Видалити чат */}
+            <div className="pt-4 border-t border-zinc-800">
+              <button 
+                onClick={() => setShowDeleteModal(true)} 
+                className="w-full px-4 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-medium rounded-xl transition flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Видалити чат
+              </button>
+            </div>
           </div>
         </div>
       )}
       {isMobile && showSidebar && <div className="absolute inset-0 bg-black/60 z-10" onClick={() => setShowSidebar(false)} />}
+      
+      {/* Модалка видалення чату */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-sm border border-zinc-800">
+            <div className="text-center mb-6">
+              <div className="text-5xl mb-4">⚠️</div>
+              <h3 className="text-xl font-bold text-white mb-2">Видалити чат?</h3>
+              <p className="text-zinc-400 text-sm">
+                Буде видалено клієнта <span className="text-white font-medium">{client.first_name} {client.last_name}</span> та всю історію повідомлень. Цю дію неможливо скасувати.
+              </p>
+            </div>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowDeleteModal(false)} 
+                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-xl transition"
+              >
+                Скасувати
+              </button>
+              <button 
+                onClick={handleDeleteClient} 
+                className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-xl transition"
+              >
+                Видалити
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Модалка передачі в продажі */}
       {showSalesModal && (
@@ -1844,6 +1895,17 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     if (client) { handleSelectClient(client); setActiveTab('chat'); }
   };
 
+  const handleDeleteClient = async (clientId) => {
+    // Видаляємо в правильному порядку: спочатку залежні записи, потім клієнта
+    await supabase.from('reminders').delete().eq('client_id', clientId);
+    await supabase.from('messages').delete().eq('client_id', clientId);
+    await supabase.from('clients').delete().eq('id', clientId);
+    
+    // Оновлюємо UI
+    setSelectedClient(null);
+    loadClients();
+  };
+
   const handleAddTemplate = async (t) => {
     if (!activeBot) return;
     await supabase.from('message_templates').insert({ ...t, expert_id: expertId, bot_id: activeBot.id });
@@ -1975,7 +2037,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
               <ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} />
             </div>
             <div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} />
+              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} />
             </div>
           </>
         )}
