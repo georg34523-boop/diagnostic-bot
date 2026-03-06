@@ -638,7 +638,6 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
             </div>
           </div>
         )}
-        </div>
       </div>
       
       {(!isMobile || showSidebar) && (
