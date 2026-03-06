@@ -633,7 +633,19 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [audioBlob, setAudioBlob] = useState(null);
+  const [videoBlob, setVideoBlob] = useState(null);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const fileInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const videoChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const canvasRef = useRef(null);
   
   const types = [
     { value: 'text', label: 'Текст', icon: '📝' },
@@ -648,15 +660,158 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
     if (selectedFile) setFile(selectedFile);
   };
   
+  // ===== AUDIO RECORDING =====
+  const startAudioRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setAudioBlob(blob);
+        stream.getTracks().forEach(track => track.stop());
+        clearInterval(recordingTimerRef.current);
+      };
+      
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+    } catch (err) {
+      alert('Немає доступу до мікрофона');
+    }
+  };
+  
+  const stopAudioRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+  
+  const cancelAudioRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stream?.getTracks().forEach(track => track.stop());
+      clearInterval(recordingTimerRef.current);
+      setIsRecording(false);
+      setRecordingTime(0);
+      setAudioBlob(null);
+    }
+  };
+  
+  // ===== VIDEO RECORDING (круглий кружок) =====
+  const openVideoRecorder = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } }, 
+        audio: true 
+      });
+      streamRef.current = stream;
+      setShowVideoRecorder(true);
+      
+      // Даємо час на рендер
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      }, 100);
+    } catch (err) {
+      alert('Немає доступу до камери: ' + err.message);
+    }
+  };
+  
+  const startVideoRecording = () => {
+    if (!streamRef.current) return;
+    
+    const mediaRecorder = new MediaRecorder(streamRef.current, { mimeType: 'video/webm;codecs=vp9,opus' });
+    mediaRecorderRef.current = mediaRecorder;
+    videoChunksRef.current = [];
+    
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) videoChunksRef.current.push(e.data);
+    };
+    
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
+      setVideoBlob(blob);
+      clearInterval(recordingTimerRef.current);
+    };
+    
+    mediaRecorder.start();
+    setIsRecording(true);
+    setRecordingTime(0);
+    recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+  };
+  
+  const stopVideoRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      // Зупиняємо стрім
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    }
+  };
+  
+  const cancelVideoRecorder = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    setShowVideoRecorder(false);
+    setIsRecording(false);
+    setRecordingTime(0);
+    setVideoBlob(null);
+  };
+  
+  const deleteRecording = () => {
+    setAudioBlob(null);
+    setVideoBlob(null);
+    setRecordingTime(0);
+  };
+  
+  const formatTime = (s) => Math.floor(s/60) + ':' + (s%60).toString().padStart(2,'0');
+  
   const handleAdd = async () => {
     if (!title) return;
     if (type === 'text' && !content) return;
-    if (type !== 'text' && !file) return;
+    if (type === 'voice' && !audioBlob && !file) return;
+    if (type === 'video_note' && !videoBlob && !file) return;
+    if ((type === 'photo' || type === 'video') && !file) return;
     
     setUploading(true);
     try {
       let fileUrl = null;
-      if (file) {
+      
+      // Якщо є записане аудіо
+      if (type === 'voice' && audioBlob) {
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+        const fileName = `templates/${Date.now()}_voice.webm`;
+        const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, audioFile);
+        if (error) throw error;
+        const { data: urlData } = supabase.storage.from('diagnostic-files').getPublicUrl(fileName);
+        fileUrl = urlData.publicUrl;
+      } 
+      // Якщо є записане відео-кружок
+      else if (type === 'video_note' && videoBlob) {
+        const videoFile = new File([videoBlob], `video_note_${Date.now()}.webm`, { type: 'video/webm' });
+        const fileName = `templates/${Date.now()}_video_note.webm`;
+        const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, videoFile);
+        if (error) throw error;
+        const { data: urlData } = supabase.storage.from('diagnostic-files').getPublicUrl(fileName);
+        fileUrl = urlData.publicUrl;
+      }
+      else if (file) {
         const fileName = `templates/${Date.now()}_${file.name}`;
         const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, file);
         if (error) throw error;
@@ -675,6 +830,10 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
       setContent('');
       setType('text');
       setFile(null);
+      setAudioBlob(null);
+      setVideoBlob(null);
+      setRecordingTime(0);
+      setShowVideoRecorder(false);
     } catch (err) {
       alert('Помилка: ' + err.message);
     }
@@ -697,7 +856,7 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
             <label className="text-sm text-zinc-400 mb-2 block">Тип</label>
             <div className="flex flex-wrap gap-2">
               {types.map(t => (
-                <button key={t.value} onClick={() => { setType(t.value); setFile(null); }} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${type === t.value ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
+                <button key={t.value} onClick={() => { setType(t.value); setFile(null); setAudioBlob(null); setVideoBlob(null); setRecordingTime(0); setShowVideoRecorder(false); }} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${type === t.value ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
                   <span>{t.icon}</span><span className="hidden sm:inline">{t.label}</span>
                 </button>
               ))}
@@ -710,9 +869,142 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
           {/* Контент залежно від типу */}
           {type === 'text' ? (
             <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Текст повідомлення" rows={3} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none" />
+          ) : type === 'voice' ? (
+            <div className="space-y-3">
+              {/* Запис голосового */}
+              {isRecording ? (
+                <div className="flex items-center gap-3 bg-black border border-red-500/50 rounded-xl p-4">
+                  <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+                  <span className="text-white flex-1">Запис {formatTime(recordingTime)}</span>
+                  <button onClick={cancelAudioRecording} className="p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-lg">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                  <button onClick={stopAudioRecording} className="p-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  </button>
+                </div>
+              ) : audioBlob ? (
+                <div className="flex items-center gap-3 bg-black border border-emerald-500/50 rounded-xl p-4">
+                  <span className="text-2xl">🎤</span>
+                  <audio src={URL.createObjectURL(audioBlob)} controls className="flex-1 h-10" />
+                  <button onClick={deleteRecording} className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              ) : (
+                <button onClick={startAudioRecording} className="w-full px-4 py-6 bg-black border border-dashed border-zinc-700 rounded-xl text-zinc-400 hover:border-emerald-500 hover:text-emerald-400 transition flex flex-col items-center gap-2">
+                  <span className="text-3xl">🎤</span>
+                  <span className="text-sm">Натисніть щоб записати голосове</span>
+                </button>
+              )}
+              
+              {/* Або вибрати файл */}
+              {!isRecording && !audioBlob && (
+                <>
+                  <div className="text-center text-zinc-600 text-sm">або</div>
+                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="audio/*" className="hidden" />
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-xl transition flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    <span>{file ? file.name : 'Завантажити аудіо файл'}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          ) : type === 'video_note' ? (
+            <div className="space-y-3">
+              {/* Модалка запису відео */}
+              {showVideoRecorder && (
+                <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+                  <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-sm">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-bold text-white">Запис кружка</h3>
+                      <button onClick={cancelVideoRecorder} className="text-zinc-400 hover:text-white text-2xl">×</button>
+                    </div>
+                    
+                    {!videoBlob ? (
+                      <>
+                        <div className="relative w-64 h-64 mx-auto rounded-full overflow-hidden bg-black mb-4">
+                          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                          {isRecording && (
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                              <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                              {formatTime(recordingTime)}
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="flex justify-center gap-4">
+                          {!isRecording ? (
+                            <button onClick={startVideoRecording} className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center transition">
+                              <div className="w-6 h-6 bg-white rounded-full"></div>
+                            </button>
+                          ) : (
+                            <button onClick={stopVideoRecording} className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center transition">
+                              <div className="w-6 h-6 bg-white rounded-sm"></div>
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-center text-zinc-500 text-sm mt-4">
+                          {isRecording ? 'Натисніть щоб зупинити' : 'Натисніть щоб почати запис'}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="relative w-64 h-64 mx-auto rounded-full overflow-hidden bg-black mb-4">
+                          <video src={URL.createObjectURL(videoBlob)} controls className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                        </div>
+                        <div className="flex justify-center gap-4">
+                          <button onClick={() => { setVideoBlob(null); openVideoRecorder(); }} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl transition">
+                            Перезаписати
+                          </button>
+                          <button onClick={() => setShowVideoRecorder(false)} className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl transition">
+                            Готово
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Превью або кнопка запису */}
+              {videoBlob ? (
+                <div className="flex items-center gap-3 bg-black border border-emerald-500/50 rounded-xl p-4">
+                  <div className="w-16 h-16 rounded-full overflow-hidden bg-zinc-800">
+                    <video src={URL.createObjectURL(videoBlob)} className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-white font-medium">Відео записано</div>
+                    <div className="text-zinc-500 text-sm">Готово до збереження</div>
+                  </div>
+                  <button onClick={() => setVideoBlob(null)} className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              ) : (
+                <button onClick={openVideoRecorder} className="w-full px-4 py-6 bg-black border border-dashed border-zinc-700 rounded-xl text-zinc-400 hover:border-emerald-500 hover:text-emerald-400 transition flex flex-col items-center gap-2">
+                  <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center">
+                    <span className="text-3xl">⭕</span>
+                  </div>
+                  <span className="text-sm">Натисніть щоб записати кружок</span>
+                </button>
+              )}
+              
+              {/* Або вибрати файл */}
+              {!videoBlob && (
+                <>
+                  <div className="text-center text-zinc-600 text-sm">або</div>
+                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="video/*" className="hidden" />
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-xl transition flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    <span>{file ? file.name : 'Завантажити відео файл'}</span>
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
             <div>
-              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept={type === 'voice' ? 'audio/*' : type === 'photo' ? 'image/*' : 'video/*'} className="hidden" />
+              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept={type === 'photo' ? 'image/*' : 'video/*'} className="hidden" />
               <button onClick={() => fileInputRef.current?.click()} className="w-full px-4 py-6 bg-black border border-dashed border-zinc-700 rounded-xl text-zinc-400 hover:border-emerald-500 hover:text-emerald-400 transition flex flex-col items-center gap-2">
                 {file ? (
                   <>
@@ -722,14 +1014,14 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
                 ) : (
                   <>
                     <span className="text-2xl">{getTypeIcon(type)}</span>
-                    <span className="text-sm">Натисніть щоб вибрати файл</span>
+                    <span className="text-sm">{type === 'video_note' ? 'Виберіть відео для кружка' : 'Натисніть щоб вибрати файл'}</span>
                   </>
                 )}
               </button>
             </div>
           )}
           
-          <button onClick={handleAdd} disabled={uploading || !title || (type === 'text' ? !content : !file)} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl transition">
+          <button onClick={handleAdd} disabled={uploading || !title || (type === 'text' ? !content : type === 'voice' ? (!audioBlob && !file) : type === 'video_note' ? (!videoBlob && !file) : !file)} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl transition">
             {uploading ? 'Завантаження...' : 'Додати шаблон'}
           </button>
         </div>
