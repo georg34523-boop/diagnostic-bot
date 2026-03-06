@@ -435,8 +435,8 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                    await bot.send_video(telegram_id, video_file)
+                                    video_file = BufferedInputFile(video_data, filename="video_note.mp4")
+                                    await bot.send_video_note(telegram_id, video_file)
                     
                     supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
