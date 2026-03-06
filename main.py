@@ -426,7 +426,43 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     audio_data = await resp.read()
-                                    voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                    
+                                    # Конвертуємо в OGG OPUS через FFmpeg
+                                    import subprocess
+                                    import tempfile
+                                    import os
+                                    
+                                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as input_file:
+                                        input_file.write(audio_data)
+                                        input_path = input_file.name
+                                    
+                                    output_path = input_path.replace('.webm', '.ogg')
+                                    
+                                    try:
+                                        # FFmpeg конвертація в OGG OPUS
+                                        process = subprocess.run([
+                                            'ffmpeg', '-y', '-i', input_path,
+                                            '-c:a', 'libopus', '-b:a', '64k',
+                                            '-vn', output_path
+                                        ], capture_output=True, timeout=30)
+                                        
+                                        if process.returncode == 0 and os.path.exists(output_path):
+                                            with open(output_path, 'rb') as f:
+                                                ogg_data = f.read()
+                                            voice_file = BufferedInputFile(ogg_data, filename="voice.ogg")
+                                        else:
+                                            # Якщо FFmpeg не спрацював - відправляємо як є
+                                            voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                    except Exception as conv_err:
+                                        logger.warning(f"FFmpeg conversion failed: {conv_err}")
+                                        voice_file = BufferedInputFile(audio_data, filename="voice.ogg")
+                                    finally:
+                                        # Cleanup temp files
+                                        if os.path.exists(input_path):
+                                            os.unlink(input_path)
+                                        if os.path.exists(output_path):
+                                            os.unlink(output_path)
+                                    
                                     await bot.send_voice(telegram_id, voice_file)
                     elif msg["content_type"] == "document" and msg.get("file_url"):
                         await bot.send_document(telegram_id, msg["file_url"], caption=msg.get("text_content"))
