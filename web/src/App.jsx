@@ -172,7 +172,6 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
-  const holdTimerRef = useRef(null);
   const streamRef = useRef(null);
 
   useEffect(() => { setNotes(client?.notes || ''); }, [client?.id]);
@@ -207,26 +206,9 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     }
   };
   
-  // Запис з утриманням кнопки
-  const handleRecordStart = (e) => {
-    e.preventDefault();
-    holdTimerRef.current = setTimeout(() => {
-      startRecording();
-    }, 200); // Почати запис через 200ms утримання
-  };
-  
-  const handleRecordEnd = (e) => {
-    e.preventDefault();
-    if (holdTimerRef.current) {
-      clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-    if (isRecording) {
-      stopRecording();
-    }
-  };
-  
   const startRecording = async () => {
+    if (isRecording) return; // Запобігаємо подвійному запуску
+    
     try {
       const constraints = recordingMode === 'video' 
         ? { video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } }, audio: true }
@@ -235,8 +217,31 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       
-      const mimeType = recordingMode === 'video' ? 'video/webm;codecs=vp9,opus' : 'audio/webm;codecs=opus';
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      // Вибираємо підтримуваний формат
+      let mimeType;
+      if (recordingMode === 'video') {
+        mimeType = 'video/webm;codecs=vp9,opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/webm;codecs=vp8,opus';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'video/webm';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              mimeType = '';
+            }
+          }
+        }
+      } else {
+        mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/webm';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = '';
+          }
+        }
+      }
+      
+      const options = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
       
@@ -245,7 +250,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       };
       
       mediaRecorder.onstop = async () => {
-        const mimeTypeBlob = recordingMode === 'video' ? 'video/webm' : 'audio/webm';
+        const mimeTypeBlob = mediaRecorder.mimeType || (recordingMode === 'video' ? 'video/webm' : 'audio/webm');
         const blob = new Blob(audioChunksRef.current, { type: mimeTypeBlob });
         stream.getTracks().forEach(track => track.stop());
         clearInterval(recordingTimerRef.current);
@@ -255,7 +260,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         // Відправляємо
         setUploading(true);
         try {
-          const ext = recordingMode === 'video' ? 'webm' : 'webm';
+          const ext = 'webm';
           const fileName = `${recordingMode}_${Date.now()}.${ext}`;
           const file = new File([blob], fileName, { type: mimeTypeBlob });
           await onSendFile(file, recordingMode === 'video' ? 'video_note' : 'voice');
@@ -448,27 +453,39 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                     </svg>
                   </button>
                 ) : (
-                  <button 
-                    onClick={() => setRecordingMode(recordingMode === 'audio' ? 'video' : 'audio')}
-                    onMouseDown={handleRecordStart}
-                    onMouseUp={handleRecordEnd}
-                    onMouseLeave={handleRecordEnd}
-                    onTouchStart={handleRecordStart}
-                    onTouchEnd={handleRecordEnd}
-                    disabled={uploading} 
-                    className="p-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 rounded-full transition relative"
-                    title={recordingMode === 'audio' ? 'Голосове (утримуйте для запису)' : 'Кружок (утримуйте для запису)'}
-                  >
-                    {recordingMode === 'audio' ? (
-                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                      </svg>
-                    ) : (
-                      <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center">
-                        <div className="w-2 h-2 bg-current rounded-full"></div>
-                      </div>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {/* Mode toggle */}
+                    <button 
+                      onClick={() => setRecordingMode(recordingMode === 'audio' ? 'video' : 'audio')}
+                      className="p-2 text-zinc-600 hover:text-zinc-400 transition"
+                      title="Перемкнути режим"
+                    >
+                      {recordingMode === 'audio' ? '⭕' : '🎤'}
+                    </button>
+                    
+                    {/* Record button */}
+                    <button 
+                      onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
+                      onTouchEnd={(e) => { e.preventDefault(); if(isRecording) stopRecording(); }}
+                      onMouseDown={(e) => { e.preventDefault(); startRecording(); }}
+                      onMouseUp={(e) => { e.preventDefault(); if(isRecording) stopRecording(); }}
+                      onMouseLeave={() => { if(isRecording) stopRecording(); }}
+                      onContextMenu={(e) => e.preventDefault()}
+                      disabled={uploading} 
+                      className="p-3 bg-zinc-900 hover:bg-zinc-800 active:bg-emerald-500 text-zinc-400 active:text-white rounded-full transition select-none touch-none"
+                      style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+                    >
+                      {recordingMode === 'audio' ? (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                      ) : (
+                        <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center">
+                          <div className="w-2 h-2 bg-current rounded-full"></div>
+                        </div>
+                      )}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -809,7 +826,21 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   const startAudioRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      
+      // Вибираємо підтримуваний формат
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = '';
+          }
+        }
+      }
+      
+      const options = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
       
@@ -818,7 +849,7 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
       };
       
       mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
         setAudioBlob(blob);
         stream.getTracks().forEach(track => track.stop());
         clearInterval(recordingTimerRef.current);
@@ -829,7 +860,7 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
     } catch (err) {
-      alert('Немає доступу до мікрофона');
+      alert('Немає доступу до мікрофона: ' + err.message);
     }
   };
   
@@ -875,7 +906,23 @@ const Templates = ({ templates, onAddTemplate, onDeleteTemplate }) => {
   const startVideoRecording = () => {
     if (!streamRef.current) return;
     
-    const mediaRecorder = new MediaRecorder(streamRef.current, { mimeType: 'video/webm;codecs=vp9,opus' });
+    // Вибираємо підтримуваний формат
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = '';
+          }
+        }
+      }
+    }
+    
+    const options = mimeType ? { mimeType } : {};
+    const mediaRecorder = new MediaRecorder(streamRef.current, options);
     mediaRecorderRef.current = mediaRecorder;
     videoChunksRef.current = [];
     
