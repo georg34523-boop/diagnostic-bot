@@ -157,9 +157,6 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [reminderDate, setReminderDate] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [recordingMode, setRecordingMode] = useState('audio'); // 'audio' або 'video'
   const [showTemplates, setShowTemplates] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [templateFilter, setTemplateFilter] = useState('all');
@@ -167,15 +164,36 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [sendingSales, setSendingSales] = useState(false);
   const [salesSuccess, setSalesSuccess] = useState(false);
+  
+  // Recording states
+  const [recordingMode, setRecordingMode] = useState('audio'); // 'audio' або 'video'
+  const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [recordedBlob, setRecordedBlob] = useState(null);
+  
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const chunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
   const streamRef = useRef(null);
+  const videoPreviewRef = useRef(null);
 
   useEffect(() => { setNotes(client?.notes || ''); }, [client?.id]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!client) return <div className="flex-1 flex items-center justify-center bg-black text-zinc-600"><div className="text-center"><div className="text-6xl mb-4 opacity-20">💬</div><div>Оберіть клієнта</div></div></div>;
 
@@ -206,8 +224,11 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
     }
   };
   
-  const startRecording = async () => {
-    if (isRecording) return; // Запобігаємо подвійному запуску
+  // ========== RECORDING FUNCTIONS ==========
+  const openRecordingModal = async () => {
+    setShowRecordingModal(true);
+    setRecordedBlob(null);
+    setRecordingTime(0);
     
     try {
       const constraints = recordingMode === 'video' 
@@ -217,85 +238,120 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       
-      // Вибираємо підтримуваний формат
-      let mimeType;
-      if (recordingMode === 'video') {
-        mimeType = 'video/webm;codecs=vp9,opus';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'video/webm;codecs=vp8,opus';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = 'video/webm';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-              mimeType = '';
-            }
-          }
-        }
-      } else {
-        mimeType = 'audio/webm;codecs=opus';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'audio/webm';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = '';
-          }
-        }
+      // Показуємо превью для відео
+      if (recordingMode === 'video' && videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = stream;
+        videoPreviewRef.current.play().catch(() => {});
       }
-      
-      const options = mimeType ? { mimeType } : {};
-      const mediaRecorder = new MediaRecorder(stream, options);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      
-      mediaRecorder.onstop = async () => {
-        const mimeTypeBlob = mediaRecorder.mimeType || (recordingMode === 'video' ? 'video/webm' : 'audio/webm');
-        const blob = new Blob(audioChunksRef.current, { type: mimeTypeBlob });
-        stream.getTracks().forEach(track => track.stop());
-        clearInterval(recordingTimerRef.current);
-        setRecordingTime(0);
-        setIsRecording(false);
-        
-        // Відправляємо
-        setUploading(true);
-        try {
-          const ext = 'webm';
-          const fileName = `${recordingMode}_${Date.now()}.${ext}`;
-          const file = new File([blob], fileName, { type: mimeTypeBlob });
-          await onSendFile(file, recordingMode === 'video' ? 'video_note' : 'voice');
-        } catch (err) {
-          alert('Помилка: ' + err.message);
-        }
-        setUploading(false);
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
     } catch (err) {
       alert('Немає доступу до ' + (recordingMode === 'video' ? 'камери' : 'мікрофона'));
+      setShowRecordingModal(false);
+    }
+  };
+  
+  const startRecording = () => {
+    if (!streamRef.current || isRecording) return;
+    
+    // Вибираємо підтримуваний формат
+    let mimeType = recordingMode === 'video' ? 'video/webm' : 'audio/webm';
+    if (recordingMode === 'video') {
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) mimeType = 'video/webm;codecs=vp9';
+      else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) mimeType = 'video/webm;codecs=vp8';
+      else if (MediaRecorder.isTypeSupported('video/mp4')) mimeType = 'video/mp4';
+    } else {
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+      else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+    }
+    
+    try {
+      const options = { mimeType };
+      const mediaRecorder = new MediaRecorder(streamRef.current, options);
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        setRecordedBlob(blob);
+        clearInterval(recordingTimerRef.current);
+        setIsRecording(false);
+      };
+      
+      mediaRecorder.start(100); // Збираємо дані кожні 100ms
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+    } catch (err) {
+      alert('Помилка запису: ' + err.message);
     }
   };
   
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
   };
   
   const cancelRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
-      setRecordingTime(0);
-      setIsRecording(false);
+    }
+    setShowRecordingModal(false);
+    setIsRecording(false);
+    setRecordedBlob(null);
+    setRecordingTime(0);
+  };
+  
+  const sendRecording = async () => {
+    if (!recordedBlob) return;
+    
+    // Зупиняємо стрім
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    setShowRecordingModal(false);
+    setUploading(true);
+    
+    try {
+      const ext = recordingMode === 'video' ? 'webm' : 'webm';
+      const fileName = `${recordingMode}_${Date.now()}.${ext}`;
+      const file = new File([recordedBlob], fileName, { type: recordedBlob.type });
+      await onSendFile(file, recordingMode === 'video' ? 'video_note' : 'voice');
+    } catch (err) {
+      alert('Помилка відправки: ' + err.message);
+    }
+    
+    setUploading(false);
+    setRecordedBlob(null);
+    setRecordingTime(0);
+  };
+  
+  const retryRecording = () => {
+    setRecordedBlob(null);
+    setRecordingTime(0);
+    // Стрім ще активний, можна записати знову
+    if (!streamRef.current) {
+      openRecordingModal();
     }
   };
   
-  const formatRecordingTime = (s) => Math.floor(s/60) + ':' + (s%60).toString().padStart(2,'0');
+  const formatRecordingTime = (s) => {
+    const min = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${min}:${sec.toString().padStart(2, '0')}`;
+  };
   
   const handleSendToSales = async () => {
     if (!googleSheetUrl) {
@@ -367,129 +423,221 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         </div>
         
         <div className="p-3 bg-zinc-950 border-t border-zinc-800">
-          {isRecording ? (
-            <div className="flex items-center gap-3 bg-zinc-900 rounded-2xl p-3">
-              <button onClick={cancelRecording} className="p-2 bg-red-500/20 text-red-400 rounded-full">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-              <div className="flex-1 flex items-center gap-3">
-                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                <span className="text-white">{recordingMode === 'video' ? '⭕' : '🎤'} {formatRecordingTime(recordingTime)}</span>
+          <div className="flex flex-col gap-2">
+            {/* Attachment menu */}
+            {showAttachMenu && (
+              <div className="bg-zinc-900 rounded-2xl p-2 flex flex-wrap gap-1">
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
+                <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
+                  <span className="text-lg">📷</span><span>Фото</span>
+                </button>
+                <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
+                  <span className="text-lg">📄</span><span>Файл</span>
+                </button>
+                <button onClick={() => { setShowTemplates(true); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
+                  <span className="text-lg">📋</span><span>Шаблони</span>
+                </button>
               </div>
-              <button onClick={stopRecording} className="p-2 bg-emerald-500 text-white rounded-full">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {/* Attachment menu */}
-              {showAttachMenu && (
-                <div className="bg-zinc-900 rounded-2xl p-2 flex flex-wrap gap-1">
-                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
-                  <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
-                    <span className="text-lg">📷</span><span>Фото</span>
-                  </button>
-                  <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
-                    <span className="text-lg">📄</span><span>Файл</span>
-                  </button>
-                  <button onClick={() => { setShowTemplates(true); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
-                    <span className="text-lg">📋</span><span>Шаблони</span>
-                  </button>
-                </div>
-              )}
-              
-              {/* Templates menu */}
-              {showTemplates && templates?.length > 0 && (
-                <div className="bg-zinc-900 rounded-2xl p-3 max-h-60 overflow-y-auto">
-                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-zinc-800">
-                    <div className="flex gap-1 overflow-x-auto">
-                      <button onClick={() => setTemplateFilter('all')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'all' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>Всі</button>
-                      <button onClick={() => setTemplateFilter('text')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'text' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📝</button>
-                      <button onClick={() => setTemplateFilter('voice')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'voice' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>🎤</button>
-                      <button onClick={() => setTemplateFilter('video_note')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'video_note' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>⭕</button>
-                      <button onClick={() => setTemplateFilter('photo')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'photo' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📷</button>
-                    </div>
-                    <button onClick={() => setShowTemplates(false)} className="text-zinc-500 hover:text-white p-1">✕</button>
+            )}
+            
+            {/* Templates menu */}
+            {showTemplates && templates?.length > 0 && (
+              <div className="bg-zinc-900 rounded-2xl p-3 max-h-60 overflow-y-auto">
+                <div className="flex items-center justify-between mb-2 pb-2 border-b border-zinc-800">
+                  <div className="flex gap-1 overflow-x-auto">
+                    <button onClick={() => setTemplateFilter('all')} className={`px-2 py-1 rounded text-xs whitespace-nowrap ${templateFilter === 'all' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>Всі</button>
+                    <button onClick={() => setTemplateFilter('text')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'text' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📝</button>
+                    <button onClick={() => setTemplateFilter('voice')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'voice' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>🎤</button>
+                    <button onClick={() => setTemplateFilter('video_note')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'video_note' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>⭕</button>
+                    <button onClick={() => setTemplateFilter('photo')} className={`px-2 py-1 rounded text-xs ${templateFilter === 'photo' ? 'bg-zinc-700 text-white' : 'text-zinc-500'}`}>📷</button>
                   </div>
-                  {templates.filter(t => templateFilter === 'all' || t.type === templateFilter).map(t => (
-                    <button key={t.id} onClick={() => handleSelectTemplate(t)} className="w-full text-left px-3 py-2 hover:bg-zinc-800 rounded-lg text-white text-sm flex items-center gap-3">
-                      <span className="text-lg">{t.type === 'voice' ? '🎤' : t.type === 'video_note' ? '⭕' : t.type === 'photo' ? '📷' : t.type === 'video' ? '🎬' : '📝'}</span>
-                      <span className="truncate">{t.title}</span>
-                    </button>
-                  ))}
-                  {templates.filter(t => templateFilter === 'all' || t.type === templateFilter).length === 0 && (
-                    <div className="text-zinc-500 text-sm text-center py-4">Немає шаблонів</div>
-                  )}
+                  <button onClick={() => setShowTemplates(false)} className="text-zinc-500 hover:text-white p-1">✕</button>
                 </div>
-              )}
+                {templates.filter(t => templateFilter === 'all' || t.type === templateFilter).map(t => (
+                  <button key={t.id} onClick={() => handleSelectTemplate(t)} className="w-full text-left px-3 py-2 hover:bg-zinc-800 rounded-lg text-white text-sm flex items-center gap-3">
+                    <span className="text-lg">{t.type === 'voice' ? '🎤' : t.type === 'video_note' ? '⭕' : t.type === 'photo' ? '📷' : t.type === 'video' ? '🎬' : '📝'}</span>
+                    <span className="truncate">{t.title}</span>
+                  </button>
+                ))}
+                {templates.filter(t => templateFilter === 'all' || t.type === templateFilter).length === 0 && (
+                  <div className="text-zinc-500 text-sm text-center py-4">Немає шаблонів</div>
+                )}
+              </div>
+            )}
+            
+            {/* Main input row */}
+            <div className="flex items-center gap-2">
+              {/* Attach button */}
+              <button 
+                onClick={() => { setShowAttachMenu(!showAttachMenu); setShowTemplates(false); }} 
+                disabled={uploading} 
+                className={`p-3 rounded-full transition ${showAttachMenu ? 'bg-emerald-500 text-white' : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400'}`}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
               
-              {/* Main input row */}
-              <div className="flex items-center gap-2">
-                {/* Attach button */}
-                <button 
-                  onClick={() => { setShowAttachMenu(!showAttachMenu); setShowTemplates(false); }} 
-                  disabled={uploading} 
-                  className={`p-3 rounded-full transition ${showAttachMenu ? 'bg-emerald-500 text-white' : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-400'}`}
-                >
+              {/* Text input */}
+              <input 
+                value={newMessage} 
+                onChange={(e) => setNewMessage(e.target.value)} 
+                onKeyPress={handleKeyPress} 
+                placeholder="Повідомлення..." 
+                className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-700 transition" 
+              />
+              
+              {/* Send or Record button */}
+              {newMessage.trim() ? (
+                <button onClick={handleSend} className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full transition">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                   </svg>
                 </button>
-                
-                {/* Text input */}
-                <input 
-                  value={newMessage} 
-                  onChange={(e) => setNewMessage(e.target.value)} 
-                  onKeyPress={handleKeyPress} 
-                  placeholder="Повідомлення..." 
-                  className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-700 transition" 
-                />
-                
-                {/* Send or Record button */}
-                {newMessage.trim() ? (
-                  <button onClick={handleSend} className="p-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full transition">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
+              ) : (
+                <div className="flex items-center gap-1">
+                  {/* Mode toggle */}
+                  <button 
+                    onClick={() => setRecordingMode(recordingMode === 'audio' ? 'video' : 'audio')}
+                    className="p-2 text-zinc-600 hover:text-zinc-400 transition text-lg"
+                    title="Перемкнути режим"
+                  >
+                    {recordingMode === 'audio' ? '⭕' : '🎤'}
                   </button>
+                  
+                  {/* Record button - opens modal */}
+                  <button 
+                    onClick={openRecordingModal}
+                    disabled={uploading} 
+                    className="p-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 rounded-full transition"
+                  >
+                    {recordingMode === 'audio' ? (
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                    ) : (
+                      <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center">
+                        <div className="w-2 h-2 bg-current rounded-full"></div>
+                      </div>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* Recording Modal */}
+        {showRecordingModal && (
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+            <div className="bg-zinc-900 rounded-3xl p-6 w-full max-w-sm">
+              <div className="text-center mb-6">
+                <h3 className="text-xl font-bold text-white">
+                  {recordingMode === 'video' ? 'Запис кружка' : 'Запис голосового'}
+                </h3>
+              </div>
+              
+              {/* Video preview / Audio visualizer */}
+              <div className="flex justify-center mb-6">
+                {recordingMode === 'video' ? (
+                  <div className="relative w-52 h-52 rounded-full overflow-hidden bg-zinc-800">
+                    {!recordedBlob ? (
+                      <video 
+                        ref={videoPreviewRef} 
+                        autoPlay 
+                        playsInline 
+                        muted 
+                        className="w-full h-full object-cover"
+                        style={{ transform: 'scaleX(-1)' }}
+                      />
+                    ) : (
+                      <video 
+                        src={URL.createObjectURL(recordedBlob)} 
+                        controls
+                        className="w-full h-full object-cover"
+                        style={{ transform: 'scaleX(-1)' }}
+                      />
+                    )}
+                    {isRecording && (
+                      <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                        <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                        {formatRecordingTime(recordingTime)}
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  <div className="flex items-center gap-1">
-                    {/* Mode toggle */}
-                    <button 
-                      onClick={() => setRecordingMode(recordingMode === 'audio' ? 'video' : 'audio')}
-                      className="p-2 text-zinc-600 hover:text-zinc-400 transition"
-                      title="Перемкнути режим"
-                    >
-                      {recordingMode === 'audio' ? '⭕' : '🎤'}
-                    </button>
-                    
-                    {/* Record button */}
-                    <button 
-                      onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
-                      onTouchEnd={(e) => { e.preventDefault(); if(isRecording) stopRecording(); }}
-                      onMouseDown={(e) => { e.preventDefault(); startRecording(); }}
-                      onMouseUp={(e) => { e.preventDefault(); if(isRecording) stopRecording(); }}
-                      onMouseLeave={() => { if(isRecording) stopRecording(); }}
-                      onContextMenu={(e) => e.preventDefault()}
-                      disabled={uploading} 
-                      className="p-3 bg-zinc-900 hover:bg-zinc-800 active:bg-emerald-500 text-zinc-400 active:text-white rounded-full transition select-none touch-none"
-                      style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
-                    >
-                      {recordingMode === 'audio' ? (
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                        </svg>
-                      ) : (
-                        <div className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center">
-                          <div className="w-2 h-2 bg-current rounded-full"></div>
-                        </div>
-                      )}
-                    </button>
+                  <div className="w-52 h-52 rounded-full bg-zinc-800 flex items-center justify-center">
+                    {recordedBlob ? (
+                      <audio src={URL.createObjectURL(recordedBlob)} controls className="w-40" />
+                    ) : (
+                      <div className="text-center">
+                        <div className={`text-6xl mb-2 ${isRecording ? 'animate-pulse' : ''}`}>🎤</div>
+                        {isRecording && (
+                          <div className="text-white text-2xl font-mono">{formatRecordingTime(recordingTime)}</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+              
+              {/* Controls */}
+              <div className="flex justify-center gap-4">
+                {!isRecording && !recordedBlob && (
+                  <>
+                    <button onClick={cancelRecording} className="p-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-full transition">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <button onClick={startRecording} className="p-6 bg-red-500 hover:bg-red-600 text-white rounded-full transition">
+                      <div className="w-6 h-6 bg-white rounded-full"></div>
+                    </button>
+                  </>
+                )}
+                
+                {isRecording && (
+                  <>
+                    <button onClick={cancelRecording} className="p-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-full transition">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <button onClick={stopRecording} className="p-6 bg-red-500 hover:bg-red-600 text-white rounded-full transition animate-pulse">
+                      <div className="w-6 h-6 bg-white rounded-sm"></div>
+                    </button>
+                  </>
+                )}
+                
+                {recordedBlob && (
+                  <>
+                    <button onClick={retryRecording} className="p-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-full transition">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </button>
+                    <button onClick={cancelRecording} className="p-4 bg-zinc-800 hover:bg-zinc-700 text-red-400 rounded-full transition">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                    <button onClick={sendRecording} className="p-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full transition">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+              
+              <p className="text-center text-zinc-500 text-sm mt-4">
+                {!isRecording && !recordedBlob && 'Натисніть червону кнопку для початку запису'}
+                {isRecording && 'Натисніть квадрат для зупинки'}
+                {recordedBlob && 'Прослухайте та надішліть або перезапишіть'}
+              </p>
             </div>
-          )}
+          </div>
+        )}
         </div>
       </div>
       
