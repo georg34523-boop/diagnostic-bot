@@ -165,6 +165,10 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [salesSuccess, setSalesSuccess] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   
+  // Template preview states
+  const [previewTemplate, setPreviewTemplate] = useState(null);
+  const [editedTemplateText, setEditedTemplateText] = useState('');
+  
   // Recording states
   const [recordingMode, setRecordingMode] = useState('audio'); // 'audio' або 'video'
   const [showRecordingModal, setShowRecordingModal] = useState(false);
@@ -211,17 +215,30 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   
   const handleSelectTemplate = async (template) => {
     setShowTemplates(false);
-    if (template.type === 'text') {
-      onSendTemplate(template.content);
-    } else if (template.file_url) {
+    setPreviewTemplate(template);
+    setEditedTemplateText(template.content || '');
+  };
+  
+  const handleSendPreviewTemplate = async () => {
+    if (!previewTemplate) return;
+    if (previewTemplate.type === 'text') {
+      onSendTemplate(editedTemplateText);
+    } else if (previewTemplate.file_url) {
       setUploading(true);
       try {
-        await onSendFile(null, template.type, template.file_url, template.content);
+        await onSendFile(null, previewTemplate.type, previewTemplate.file_url, editedTemplateText);
       } catch (err) {
         alert('Помилка');
       }
       setUploading(false);
     }
+    setPreviewTemplate(null);
+    setEditedTemplateText('');
+  };
+  
+  const handleCancelPreview = () => {
+    setPreviewTemplate(null);
+    setEditedTemplateText('');
   };
   
   // ========== RECORDING FUNCTIONS ==========
@@ -706,6 +723,67 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                 className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-xl transition"
               >
                 Видалити
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Модалка превью шаблону */}
+      {previewTemplate && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 rounded-2xl p-6 w-full max-w-md border border-zinc-800">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-white">
+                {previewTemplate.type === 'text' ? '📝' : previewTemplate.type === 'voice' ? '🎤' : previewTemplate.type === 'video_note' ? '⭕' : '📷'} {previewTemplate.name}
+              </h3>
+              <button onClick={handleCancelPreview} className="text-zinc-400 hover:text-white text-2xl">×</button>
+            </div>
+            
+            {/* Превью медіа */}
+            {previewTemplate.type === 'voice' && previewTemplate.file_url && (
+              <div className="mb-4 p-3 bg-black rounded-xl">
+                <audio controls className="w-full" src={previewTemplate.file_url} />
+              </div>
+            )}
+            {previewTemplate.type === 'video_note' && previewTemplate.file_url && (
+              <div className="mb-4 flex justify-center">
+                <video controls className="w-40 h-40 rounded-full object-cover bg-black" src={previewTemplate.file_url} />
+              </div>
+            )}
+            {previewTemplate.type === 'photo' && previewTemplate.file_url && (
+              <div className="mb-4">
+                <img src={previewTemplate.file_url} alt="preview" className="w-full rounded-xl max-h-48 object-cover" />
+              </div>
+            )}
+            
+            {/* Текст для редагування */}
+            <div className="mb-4">
+              <label className="block text-zinc-400 text-sm mb-2">
+                {previewTemplate.type === 'text' ? 'Текст повідомлення' : 'Підпис (опційно)'}
+              </label>
+              <textarea
+                value={editedTemplateText}
+                onChange={(e) => setEditedTemplateText(e.target.value)}
+                rows={4}
+                className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none"
+                placeholder="Введіть текст..."
+              />
+            </div>
+            
+            <div className="flex gap-3">
+              <button 
+                onClick={handleCancelPreview} 
+                className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-xl transition"
+              >
+                Скасувати
+              </button>
+              <button 
+                onClick={handleSendPreviewTemplate}
+                disabled={previewTemplate.type === 'text' && !editedTemplateText.trim()}
+                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium rounded-xl transition"
+              >
+                Надіслати
               </button>
             </div>
           </div>
