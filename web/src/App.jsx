@@ -6,11 +6,10 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const STATUSES = {
-  new: { label: 'Новий', color: 'bg-zinc-500' },
-  diagnostic_scheduled: { label: 'Діагн. заплан.', color: 'bg-sky-500' },
-  diagnostic_done: { label: 'Діагн. пров.', color: 'bg-emerald-500' },
-  call_scheduled: { label: 'Дзвін. заплан.', color: 'bg-violet-500' },
-  call_done: { label: 'Дзвін. пров.', color: 'bg-rose-500' },
+  new: { label: 'Новий', short: 'Новий', color: 'bg-zinc-500' },
+  diagnostic_scheduled: { label: 'Діагн. запланована', short: '📅 Заплан', color: 'bg-sky-500' },
+  diagnostic_done: { label: 'Діагн. проведена', short: '✅ Провед', color: 'bg-emerald-500' },
+  transferred_to_sales: { label: 'Передано у ВП', short: '💼 У ВП', color: 'bg-violet-500' },
 };
 
 const formatDate = (d) => { if (!d) return ''; const date = new Date(d); const now = new Date(); const diff = Math.floor((now - date) / 60000); if (diff < 1) return 'щойно'; if (diff < 60) return diff + ' хв'; if (diff < 1440) return Math.floor(diff / 60) + ' год'; if (diff < 10080) return Math.floor(diff / 1440) + ' дн'; return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' }); };
@@ -119,9 +118,9 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
       </div>
       <div className="p-3 border-b border-zinc-800 flex flex-wrap gap-2">
         <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === 'all' ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>Всі ({clients.length})</button>
-        {Object.entries(STATUSES).map(([key, { label }]) => {
+        {Object.entries(STATUSES).map(([key, { short }]) => {
           const count = clients.filter(c => c.status === key).length;
-          return <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === key ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>{label.split(' ')[0]} ({count})</button>;
+          return <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === key ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>{short} ({count})</button>;
         })}
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -799,11 +798,11 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
   const uniqueClients = selectedBot === 'all' ? getUniqueClients(filteredByPeriod) : filteredByBot;
   
   // Статуси
-  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
   uniqueClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
   
   const total = uniqueClients.length;
-  const converted = statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done;
+  const converted = statusCounts.diagnostic_done + statusCounts.transferred_to_sales;
   const conversionRate = total > 0 ? Math.round(converted / total * 100) : 0;
   
   // Динаміка по днях (останні 14 днів)
@@ -841,9 +840,9 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
   const getBotStats = () => {
     return bots.map(bot => {
       const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
-      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
       botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
-      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.call_scheduled + botStatusCounts.call_done;
+      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.transferred_to_sales;
       return {
         ...bot,
         clientsCount: botClients.length,
@@ -900,8 +899,8 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
           <div className="text-zinc-500 mt-1 text-sm">Діагностик</div>
         </div>
         <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
-          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.call_done}</div>
-          <div className="text-zinc-500 mt-1 text-sm">Дзвінків</div>
+          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.transferred_to_sales}</div>
+          <div className="text-zinc-500 mt-1 text-sm">У ВП</div>
         </div>
       </div>
       
@@ -2196,7 +2195,7 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
   const getExpertStats = (expertId) => {
     const clients = allClients.filter(c => c.expert_id === expertId);
     const total = clients.length;
-    const done = clients.filter(c => ['diagnostic_done', 'call_scheduled', 'call_done'].includes(c.status)).length;
+    const done = clients.filter(c => ['diagnostic_done', 'transferred_to_sales'].includes(c.status)).length;
     return { total, done, conversion: total > 0 ? Math.round(done / total * 100) : 0 };
   };
 
@@ -2261,7 +2260,7 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
     experts: experts.length,
     bots: bots.length,
     clients: allClients.length,
-    conversion: allClients.length > 0 ? Math.round(allClients.filter(c => ['diagnostic_done', 'call_scheduled', 'call_done'].includes(c.status)).length / allClients.length * 100) : 0
+    conversion: allClients.length > 0 ? Math.round(allClients.filter(c => ['diagnostic_done', 'transferred_to_sales'].includes(c.status)).length / allClients.length * 100) : 0
   };
 
   const adminTabs = [
@@ -2447,7 +2446,7 @@ const AdminPanel = ({ onSelectExpert, onLogout }) => {
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {bots.map(bot => {
                 const botClients = allClients.filter(c => c.bot_id === bot.id);
-                const botConverted = botClients.filter(c => ['diagnostic_done', 'call_scheduled', 'call_done'].includes(c.status)).length;
+                const botConverted = botClients.filter(c => ['diagnostic_done', 'transferred_to_sales'].includes(c.status)).length;
                 const botConversion = botClients.length > 0 ? Math.round(botConverted / botClients.length * 100) : 0;
                 return (
                   <div key={bot.id} className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
@@ -2537,11 +2536,11 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   }
   
   // Статуси
-  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
   displayClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
   
   const total = displayClients.length;
-  const converted = statusCounts.diagnostic_done + statusCounts.call_scheduled + statusCounts.call_done;
+  const converted = statusCounts.diagnostic_done + statusCounts.transferred_to_sales;
   const conversionRate = total > 0 ? Math.round(converted / total * 100) : 0;
   
   // Динаміка по днях
@@ -2585,9 +2584,9 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   const getExpertStats = () => {
     return experts.map(expert => {
       const expertClients = getExpertUniqueClients(filteredByPeriod, expert.id);
-      const expertStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      const expertStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
       expertClients.forEach(c => { if (expertStatusCounts[c.status] !== undefined) expertStatusCounts[c.status]++; });
-      const expertConverted = expertStatusCounts.diagnostic_done + expertStatusCounts.call_scheduled + expertStatusCounts.call_done;
+      const expertConverted = expertStatusCounts.diagnostic_done + expertStatusCounts.transferred_to_sales;
       const expertBots = bots.filter(b => b.expert_id === expert.id);
       return {
         ...expert,
@@ -2603,9 +2602,9 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   const getBotStats = () => {
     return displayBots.map(bot => {
       const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
-      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, call_scheduled: 0, call_done: 0 };
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
       botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
-      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.call_scheduled + botStatusCounts.call_done;
+      const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.transferred_to_sales;
       return {
         ...bot,
         clientsCount: botClients.length,
@@ -2684,8 +2683,8 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
           <div className="text-zinc-500 mt-1 text-sm">Діагностик</div>
         </div>
         <div className="bg-zinc-900 rounded-2xl p-4 md:p-5 border border-zinc-800">
-          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.call_done}</div>
-          <div className="text-zinc-500 mt-1 text-sm">Дзвінків</div>
+          <div className="text-2xl md:text-3xl font-bold text-violet-400">{statusCounts.transferred_to_sales}</div>
+          <div className="text-zinc-500 mt-1 text-sm">У ВП</div>
         </div>
       </div>
       
