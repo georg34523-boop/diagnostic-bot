@@ -1817,8 +1817,11 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
   };
 
   const loadReminders = async () => {
-    const { data } = await supabase.from('reminders').select('*, clients(first_name)').eq('expert_id', expertId).eq('is_completed', false).order('remind_at');
-    if (data) setReminders(data);
+    if (!activeBot) return;
+    const { data } = await supabase.from('reminders').select('*, clients(first_name, bot_id)').eq('is_completed', false).order('remind_at');
+    // Фільтруємо по bot_id клієнта
+    const filtered = data?.filter(r => r.clients?.bot_id === activeBot.id) || [];
+    setReminders(filtered);
   };
 
   const loadMessages = async (clientId) => {
@@ -1879,11 +1882,9 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
   };
 
   const handleAddReminder = async (text, date) => {
-    if (!selectedClient || !activeBot) return;
+    if (!selectedClient) return;
     const { error } = await supabase.from('reminders').insert({ 
       client_id: selectedClient.id, 
-      expert_id: expertId, 
-      bot_id: activeBot.id,
       reminder_text: text, 
       remind_at: date 
     });
