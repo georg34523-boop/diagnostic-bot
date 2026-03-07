@@ -1879,8 +1879,15 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
   };
 
   const handleAddReminder = async (text, date) => {
-    if (!selectedClient) return;
-    await supabase.from('reminders').insert({ client_id: selectedClient.id, expert_id: expertId, reminder_text: text, remind_at: date });
+    if (!selectedClient || !activeBot) return;
+    const { error } = await supabase.from('reminders').insert({ 
+      client_id: selectedClient.id, 
+      expert_id: expertId, 
+      bot_id: activeBot.id,
+      reminder_text: text, 
+      remind_at: date 
+    });
+    if (error) console.error('Reminder error:', error);
     loadReminders();
   };
 
