@@ -1988,10 +1988,13 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   const handleAddReminder = async (text, date) => {
     if (!selectedClient) return;
+    // Додаємо київський timezone до дати (datetime-local не має timezone)
+    // Це гарантує що 15:00 в інпуті = 15:00 київського часу
+    const kyivDate = date + ':00+02:00'; // Формат ISO з timezone
     const { error } = await supabase.from('reminders').insert({ 
       client_id: selectedClient.id, 
       reminder_text: text, 
-      remind_at: date 
+      remind_at: kyivDate 
     });
     if (error) console.error('Reminder error:', error);
     loadReminders();
