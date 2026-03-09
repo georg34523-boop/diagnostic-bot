@@ -148,7 +148,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
 };
 
 // ==================== CHAT WINDOW ====================
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient, onDeleteMessage }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
@@ -431,8 +431,16 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-3 ${msg.direction === 'expert' ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}>
+            <div key={msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'} group`}>
+              <div className={`relative max-w-[75%] md:max-w-md rounded-2xl px-4 py-3 ${msg.direction === 'expert' ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}>
+                {/* Кнопка видалення */}
+                <button 
+                  onClick={() => onDeleteMessage(msg.id)}
+                  className={`absolute -top-2 ${msg.direction === 'expert' ? '-left-2' : '-right-2'} w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center`}
+                  title="Видалити"
+                >
+                  ✕
+                </button>
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
                 {msg.content_type === 'video_note' && msg.file_url && <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover" />}
@@ -1925,6 +1933,25 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     loadMessages(selectedClient.id);
   };
 
+  const handleDeleteMessage = async (messageId) => {
+    if (!confirm('Видалити це повідомлення?')) return;
+    try {
+      const response = await fetch(`${RAILWAY_API_URL}/api/message/${messageId}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        loadMessages(selectedClient.id);
+      } else {
+        alert('Помилка видалення');
+      }
+    } catch (err) {
+      console.error('Delete message error:', err);
+      // Якщо API недоступний - видаляємо тільки з бази
+      await supabase.from('messages').delete().eq('id', messageId);
+      loadMessages(selectedClient.id);
+    }
+  };
+
   const handleSendFile = async (file, type = null, templateUrl = null, caption = null) => {
     if (!selectedClient) return;
     
@@ -2122,7 +2149,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
               <ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} />
             </div>
             <div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} />
+              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} onDeleteMessage={handleDeleteMessage} />
             </div>
           </>
         )}
