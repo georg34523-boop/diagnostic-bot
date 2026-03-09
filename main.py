@@ -734,22 +734,24 @@ async def create_token_api(request: Request):
 async def delete_message_api(message_id: str):
     """Видалити повідомлення з бази та Telegram"""
     try:
-        # Отримуємо повідомлення
-        msg_result = supabase.table("messages").select("*, clients(telegram_id, expert_id)").eq("id", message_id).execute()
+        # Отримуємо повідомлення з bot_id клієнта
+        msg_result = supabase.table("messages").select("*, clients(telegram_id, bot_id)").eq("id", message_id).execute()
         if not msg_result.data:
             raise HTTPException(status_code=404, detail="Message not found")
         
         msg = msg_result.data[0]
         telegram_message_id = msg.get("telegram_message_id")
         telegram_id = msg.get("clients", {}).get("telegram_id")
-        expert_id = msg.get("clients", {}).get("expert_id")
+        client_bot_id = msg.get("clients", {}).get("bot_id")
+        
+        logger.info(f"Deleting message: tg_msg_id={telegram_message_id}, tg_id={telegram_id}, bot_id={client_bot_id}")
         
         # Видаляємо з Telegram якщо є message_id
         telegram_deleted = False
-        if telegram_message_id and telegram_id and expert_id:
+        if telegram_message_id and telegram_id and client_bot_id:
             bot_entry = None
             for token, data in active_bots.items():
-                if data["expert_id"] == expert_id:
+                if data["bot_id"] == client_bot_id:
                     bot_entry = data
                     break
             
@@ -757,9 +759,13 @@ async def delete_message_api(message_id: str):
                 try:
                     await bot_entry["bot"].delete_message(chat_id=telegram_id, message_id=telegram_message_id)
                     telegram_deleted = True
-                    logger.info(f"Deleted message {telegram_message_id} from Telegram")
+                    logger.info(f"Deleted message {telegram_message_id} from Telegram for chat {telegram_id}")
                 except Exception as tg_err:
                     logger.warning(f"Could not delete from Telegram: {tg_err}")
+            else:
+                logger.warning(f"Bot not found for bot_id={client_bot_id}")
+        else:
+            logger.info(f"Missing data for Telegram delete: tg_msg_id={telegram_message_id}, tg_id={telegram_id}, bot_id={client_bot_id}")
         
         # Видаляємо з бази
         supabase.table("messages").delete().eq("id", message_id).execute()
