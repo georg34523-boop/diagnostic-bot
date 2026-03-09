@@ -179,7 +179,8 @@ async def get_or_create_client(user: types.User, bot_id: str, expert_id: str, em
 
 async def save_message(client_id: str, direction: str, content_type: str, 
                        text_content: str = None, file_url: str = None,
-                       file_name: str = None, telegram_file_id: str = None):
+                       file_name: str = None, telegram_file_id: str = None,
+                       telegram_message_id: int = None):
     """Зберегти повідомлення в базу"""
     message_data = {
         "client_id": client_id,
@@ -189,10 +190,12 @@ async def save_message(client_id: str, direction: str, content_type: str,
         "file_url": file_url,
         "file_name": file_name,
         "telegram_file_id": telegram_file_id,
+        "telegram_message_id": telegram_message_id,
         "is_read": direction == "expert"
     }
-    supabase.table("messages").insert(message_data).execute()
+    result = supabase.table("messages").insert(message_data).execute()
     supabase.table("clients").update({"updated_at": datetime.utcnow().isoformat()}).eq("id", client_id).execute()
+    return result.data[0] if result.data else None
 
 
 async def upload_file_to_storage(file_bytes: bytes, file_name: str) -> str:
@@ -270,7 +273,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id)
+        await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.video)
     async def handle_video(message: Message):
@@ -285,7 +288,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="video", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=video.file_id)
+        await save_message(client_id=client["id"], direction="client", content_type="video", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=video.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.voice)
     async def handle_voice(message: Message):
@@ -300,7 +303,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="voice", file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id)
+        await save_message(client_id=client["id"], direction="client", content_type="voice", file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.video_note)
     async def handle_video_note(message: Message):
@@ -315,7 +318,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="video_note", file_url=file_url, file_name=file_name, telegram_file_id=video_note.file_id)
+        await save_message(client_id=client["id"], direction="client", content_type="video_note", file_url=file_url, file_name=file_name, telegram_file_id=video_note.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.document)
     async def handle_document(message: Message):
@@ -330,7 +333,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="document", text_content=message.caption, file_url=file_url, file_name=document.file_name, telegram_file_id=document.file_id)
+        await save_message(client_id=client["id"], direction="client", content_type="document", text_content=message.caption, file_url=file_url, file_name=document.file_name, telegram_file_id=document.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.text)
     async def handle_text(message: Message):
@@ -340,7 +343,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             await message.answer("⛔ У вас немає доступу.")
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
-        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text)
+        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id)
 
 
 async def initialize_bot(bot_data: dict) -> bool:
@@ -415,12 +418,13 @@ async def send_expert_messages():
                 bot = bot_entry["bot"]
                 
                 try:
+                    sent_message = None
                     if msg["content_type"] == "text" and msg.get("text_content"):
-                        await bot.send_message(telegram_id, msg["text_content"])
+                        sent_message = await bot.send_message(telegram_id, msg["text_content"])
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
-                        await bot.send_photo(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        sent_message = await bot.send_photo(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "video" and msg.get("file_url"):
-                        await bot.send_video(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        sent_message = await bot.send_video(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
@@ -463,9 +467,9 @@ async def send_expert_messages():
                                         if os.path.exists(output_path):
                                             os.unlink(output_path)
                                     
-                                    await bot.send_voice(telegram_id, voice_file)
+                                    sent_message = await bot.send_voice(telegram_id, voice_file)
                     elif msg["content_type"] == "document" and msg.get("file_url"):
-                        await bot.send_document(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        sent_message = await bot.send_document(telegram_id, msg["file_url"], caption=msg.get("text_content"))
                     elif msg["content_type"] == "video_note" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
@@ -512,9 +516,13 @@ async def send_expert_messages():
                                         if os.path.exists(output_path):
                                             os.unlink(output_path)
                                     
-                                    await bot.send_video_note(telegram_id, video_file)
+                                    sent_message = await bot.send_video_note(telegram_id, video_file)
                     
-                    supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
+                    # Зберігаємо telegram_message_id
+                    update_data = {"is_read": True}
+                    if sent_message:
+                        update_data["telegram_message_id"] = sent_message.message_id
+                    supabase.table("messages").update(update_data).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
                     logger.info(f"Sent message {msg['id']} to {telegram_id}")
                 except Exception as e:
@@ -719,6 +727,48 @@ async def create_token_api(request: Request):
         return {"success": True, "token": token, "bot_link": f"https://t.me/{bot_username}?start={token}"}
     except Exception as e:
         logger.error(f"Create token error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/message/{message_id}")
+async def delete_message_api(message_id: str):
+    """Видалити повідомлення з бази та Telegram"""
+    try:
+        # Отримуємо повідомлення
+        msg_result = supabase.table("messages").select("*, clients(telegram_id, expert_id)").eq("id", message_id).execute()
+        if not msg_result.data:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        msg = msg_result.data[0]
+        telegram_message_id = msg.get("telegram_message_id")
+        telegram_id = msg.get("clients", {}).get("telegram_id")
+        expert_id = msg.get("clients", {}).get("expert_id")
+        
+        # Видаляємо з Telegram якщо є message_id
+        telegram_deleted = False
+        if telegram_message_id and telegram_id and expert_id:
+            bot_entry = None
+            for token, data in active_bots.items():
+                if data["expert_id"] == expert_id:
+                    bot_entry = data
+                    break
+            
+            if bot_entry:
+                try:
+                    await bot_entry["bot"].delete_message(chat_id=telegram_id, message_id=telegram_message_id)
+                    telegram_deleted = True
+                    logger.info(f"Deleted message {telegram_message_id} from Telegram")
+                except Exception as tg_err:
+                    logger.warning(f"Could not delete from Telegram: {tg_err}")
+        
+        # Видаляємо з бази
+        supabase.table("messages").delete().eq("id", message_id).execute()
+        
+        return {"success": True, "message": "Message deleted", "telegram_deleted": telegram_deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete message error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
