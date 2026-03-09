@@ -12,8 +12,8 @@ const STATUSES = {
   transferred_to_sales: { label: 'Передано у ВП', short: '💼 У ВП', color: 'bg-violet-500' },
 };
 
-const formatDate = (d) => { if (!d) return ''; const date = new Date(d); const now = new Date(); const diff = Math.floor((now - date) / 60000); if (diff < 1) return 'щойно'; if (diff < 60) return diff + ' хв'; if (diff < 1440) return Math.floor(diff / 60) + ' год'; if (diff < 10080) return Math.floor(diff / 1440) + ' дн'; return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' }); };
-const formatFullDate = (d) => d ? new Date(d).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '';
+const formatDate = (d) => { if (!d) return ''; const date = new Date(d); const now = new Date(); const diff = Math.floor((now - date) / 60000); if (diff < 1) return 'щойно'; if (diff < 60) return diff + ' хв'; if (diff < 1440) return Math.floor(diff / 60) + ' год'; if (diff < 10080) return Math.floor(diff / 1440) + ' дн'; return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short', timeZone: 'Europe/Kyiv' }); };
+const formatFullDate = (d) => d ? new Date(d).toLocaleString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Kyiv' }) : '';
 
 // ==================== LOGO ====================
 const Logo = ({ size = 'default' }) => (
