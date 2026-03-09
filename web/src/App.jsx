@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = 'https://jlwjocmcmrplvulqxnik.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impsd2pvY21jbXJwbHZ1bHF4bmlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAyODY5NjgsImV4cCI6MjA4NTg2Mjk2OH0.5jbJRQVUJ2Hcle3bhq3LOtAtRpaHAd5_Slh44_h9apM';
 const supabase = createClient(supabaseUrl, supabaseKey);
+const RAILWAY_API_URL = 'https://diagnostic-bot-production.up.railway.app';
 
 const STATUSES = {
   new: { label: 'Новий', short: 'Новий', color: 'bg-zinc-500' },
@@ -1599,8 +1600,6 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const [welcomeMessage, setWelcomeMessage] = useState('');
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [username, setUsername] = useState('');
-
-  const RAILWAY_API_URL = 'https://diagnostic-bot-production.up.railway.app';
   
   useEffect(() => {
     if (editingBot) {
