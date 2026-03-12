@@ -456,15 +456,17 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         </div>
         
         <div className="p-3 bg-zinc-950 border-t border-zinc-800">
+          {/* Hidden file inputs — НЕ внутри скрываемого блока */}
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
+          
           <div className="flex flex-col gap-2">
             {/* Attachment menu */}
             {showAttachMenu && (
               <div className="bg-zinc-900 rounded-2xl p-2 flex flex-wrap gap-1">
-                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
-                <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
+                <button onClick={() => { setShowAttachMenu(false); setTimeout(() => fileInputRef.current?.click(), 50); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
                   <span className="text-lg">📷</span><span>Фото</span>
                 </button>
-                <button onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
+                <button onClick={() => { setShowAttachMenu(false); setTimeout(() => fileInputRef.current?.click(), 50); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
                   <span className="text-lg">📄</span><span>Файл</span>
                 </button>
                 <button onClick={() => { setShowTemplates(true); setShowAttachMenu(false); }} className="flex-1 min-w-[80px] px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-sm flex flex-col items-center gap-1 transition">
