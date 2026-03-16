@@ -433,49 +433,10 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    
-                                    import subprocess
-                                    import tempfile
-                                    import json as json_module
-                                    
-                                    # Зберігаємо тимчасовий файл для ffprobe
-                                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                                        tmp.write(video_data)
-                                        tmp_path = tmp.name
-                                    
-                                    width, height, duration = None, None, None
-                                    try:
-                                        # Отримуємо метадані відео через ffprobe
-                                        probe = subprocess.run([
-                                            'ffprobe', '-v', 'quiet',
-                                            '-print_format', 'json',
-                                            '-show_streams', '-show_format',
-                                            tmp_path
-                                        ], capture_output=True, timeout=10)
-                                        
-                                        if probe.returncode == 0:
-                                            info = json_module.loads(probe.stdout.decode())
-                                            for stream in info.get('streams', []):
-                                                if stream.get('codec_type') == 'video':
-                                                    width = int(stream.get('width', 0)) or None
-                                                    height = int(stream.get('height', 0)) or None
-                                                    break
-                                            fmt = info.get('format', {})
-                                            dur = fmt.get('duration')
-                                            if dur:
-                                                duration = int(float(dur))
-                                    except Exception as probe_err:
-                                        logger.warning(f"ffprobe failed: {probe_err}")
-                                    finally:
-                                        if os.path.exists(tmp_path):
-                                            os.unlink(tmp_path)
-                                    
                                     video_file = BufferedInputFile(video_data, filename="video.mp4")
                                     sent_message = await bot.send_video(
                                         telegram_id, video_file,
                                         caption=msg.get("text_content"),
-                                        width=width, height=height,
-                                        duration=duration,
                                         supports_streaming=True
                                     )
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
