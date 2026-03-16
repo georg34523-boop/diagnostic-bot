@@ -433,8 +433,13 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                    sent_message = await bot.send_video(telegram_id, video_file, caption=msg.get("text_content"))
+                                    # Визначаємо оригінальне ім'я файлу
+                                    original_name = msg.get("file_name", "video.mp4")
+                                    if not original_name.endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
+                                        original_name = "video.mp4"
+                                    video_file = BufferedInputFile(video_data, filename=original_name)
+                                    # Відправляємо як document щоб зберегти оригінальну якість
+                                    sent_message = await bot.send_document(telegram_id, video_file, caption=msg.get("text_content"))
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
