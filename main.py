@@ -433,56 +433,90 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    logger.info(f"Downloaded video: {len(video_data)/1024/1024:.1f}MB")
+                                    video_size_mb = len(video_data) / (1024 * 1024)
+                                    logger.info(f"Downloaded video: {video_size_mb:.1f}MB")
+                                    caption_text = msg.get("text_content")
                                     
-                                    # Генеруємо thumbnail
-                                    thumb_input = None
+                                    import subprocess
+                                    import os as _os
+                                    
+                                    input_path = f"/tmp/vid_{msg['id']}.mp4"
+                                    preview_path = f"/tmp/preview_{msg['id']}.jpg"
+                                    compressed_path = f"/tmp/compressed_{msg['id']}.mp4"
+                                    
+                                    with open(input_path, 'wb') as f:
+                                        f.write(video_data)
+                                    
+                                    # 1. Генеруємо превью-фото і відправляємо з підписом
                                     try:
-                                        import subprocess
-                                        import tempfile
-                                        
-                                        input_path = f"/tmp/vid_{msg['id']}.mp4"
-                                        thumb_path = f"/tmp/thumb_{msg['id']}.jpg"
-                                        
-                                        with open(input_path, 'wb') as f:
-                                            f.write(video_data)
-                                        logger.info(f"Saved temp video to {input_path}")
-                                        
-                                        result = subprocess.run([
+                                        subprocess.run([
                                             'ffmpeg', '-y', '-i', input_path,
                                             '-ss', '00:00:01', '-vframes', '1',
-                                            '-vf', 'scale=320:-2',
-                                            '-q:v', '3',
-                                            thumb_path
+                                            '-q:v', '2',
+                                            preview_path
                                         ], capture_output=True, timeout=30)
                                         
-                                        logger.info(f"FFmpeg thumb result: returncode={result.returncode}")
-                                        if result.returncode != 0:
-                                            logger.warning(f"FFmpeg stderr: {result.stderr.decode()[:300]}")
-                                        
-                                        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                                            with open(thumb_path, 'rb') as f:
-                                                thumb_bytes = f.read()
-                                            thumb_input = BufferedInputFile(thumb_bytes, filename="thumb.jpg")
-                                            logger.info(f"Thumbnail created: {len(thumb_bytes)} bytes")
-                                        
-                                        # Cleanup
-                                        for p in [input_path, thumb_path]:
-                                            try:
-                                                if os.path.exists(p):
-                                                    os.unlink(p)
-                                            except:
-                                                pass
-                                    except Exception as th_err:
-                                        logger.warning(f"Thumbnail generation failed: {th_err}")
+                                        if _os.path.exists(preview_path) and _os.path.getsize(preview_path) > 0:
+                                            with open(preview_path, 'rb') as f:
+                                                preview_bytes = f.read()
+                                            preview_file = BufferedInputFile(preview_bytes, filename="preview.jpg")
+                                            await bot.send_photo(telegram_id, preview_file, caption=caption_text)
+                                            logger.info("Preview photo sent")
+                                    except Exception as prev_err:
+                                        logger.warning(f"Preview failed: {prev_err}")
                                     
-                                    # Відправляємо як document з thumbnail
-                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                    sent_message = await bot.send_document(
-                                        telegram_id, video_file,
-                                        caption=msg.get("text_content"),
-                                        thumbnail=thumb_input
-                                    )
+                                    # 2. Якщо відео > 49MB — стискаємо через ffmpeg
+                                    send_data = video_data
+                                    if video_size_mb > 49:
+                                        try:
+                                            # Розраховуємо бітрейт для ~45MB результату
+                                            probe = subprocess.run([
+                                                'ffprobe', '-v', 'quiet', '-show_format',
+                                                '-print_format', 'json', input_path
+                                            ], capture_output=True, timeout=15)
+                                            
+                                            duration = 60  # default
+                                            if probe.returncode == 0:
+                                                import json as _json
+                                                info = _json.loads(probe.stdout.decode())
+                                                dur = info.get('format', {}).get('duration')
+                                                if dur:
+                                                    duration = max(int(float(dur)), 1)
+                                            
+                                            target_bitrate = int((45 * 8 * 1024) / duration)  # kbps для ~45MB
+                                            logger.info(f"Compressing video: duration={duration}s, target_bitrate={target_bitrate}kbps")
+                                            
+                                            subprocess.run([
+                                                'ffmpeg', '-y', '-i', input_path,
+                                                '-c:v', 'libx264', '-b:v', f'{target_bitrate}k',
+                                                '-preset', 'fast', '-c:a', 'aac', '-b:a', '128k',
+                                                '-movflags', '+faststart', '-pix_fmt', 'yuv420p',
+                                                compressed_path
+                                            ], capture_output=True, timeout=600)
+                                            
+                                            if _os.path.exists(compressed_path) and _os.path.getsize(compressed_path) > 0:
+                                                comp_size = _os.path.getsize(compressed_path) / (1024 * 1024)
+                                                logger.info(f"Compressed: {video_size_mb:.1f}MB -> {comp_size:.1f}MB")
+                                                if comp_size <= 49:
+                                                    with open(compressed_path, 'rb') as f:
+                                                        send_data = f.read()
+                                                else:
+                                                    logger.warning(f"Still too large after compression: {comp_size:.1f}MB")
+                                        except Exception as comp_err:
+                                            logger.warning(f"Compression failed: {comp_err}")
+                                    
+                                    # 3. Відправляємо файл
+                                    video_file = BufferedInputFile(send_data, filename="video.mp4")
+                                    sent_message = await bot.send_document(telegram_id, video_file)
+                                    logger.info(f"Video document sent: {len(send_data)/1024/1024:.1f}MB")
+                                    
+                                    # Cleanup
+                                    for p in [input_path, preview_path, compressed_path]:
+                                        try:
+                                            if _os.path.exists(p):
+                                                _os.unlink(p)
+                                        except:
+                                            pass
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
