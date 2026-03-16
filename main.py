@@ -433,42 +433,10 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    
-                                    import subprocess
-                                    import tempfile
-                                    
-                                    # Створюємо thumbnail для красивого відображення
-                                    thumbnail_data = None
-                                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                                        tmp.write(video_data)
-                                        tmp_path = tmp.name
-                                    
-                                    thumb_path = tmp_path + '_thumb.jpg'
-                                    try:
-                                        subprocess.run([
-                                            'ffmpeg', '-y', '-i', tmp_path,
-                                            '-ss', '00:00:01', '-vframes', '1',
-                                            '-vf', 'scale=320:-1',
-                                            thumb_path
-                                        ], capture_output=True, timeout=10)
-                                        
-                                        if os.path.exists(thumb_path):
-                                            with open(thumb_path, 'rb') as f:
-                                                thumbnail_data = f.read()
-                                    except Exception as th_err:
-                                        logger.warning(f"Thumbnail generation failed: {th_err}")
-                                    finally:
-                                        if os.path.exists(tmp_path):
-                                            os.unlink(tmp_path)
-                                        if os.path.exists(thumb_path):
-                                            os.unlink(thumb_path)
-                                    
                                     video_file = BufferedInputFile(video_data, filename="video.mp4")
-                                    thumb_file = BufferedInputFile(thumbnail_data, filename="thumb.jpg") if thumbnail_data else None
                                     sent_message = await bot.send_document(
                                         telegram_id, video_file,
-                                        caption=msg.get("text_content"),
-                                        thumbnail=thumb_file
+                                        caption=msg.get("text_content")
                                     )
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
