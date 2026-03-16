@@ -433,70 +433,57 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    
-                                    import subprocess
-                                    import tempfile
-                                    import json as json_module
-                                    
-                                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                                        tmp.write(video_data)
-                                        input_path = tmp.name
-                                    
-                                    output_path = input_path + '_out.mp4'
-                                    width, height, duration = None, None, None
                                     final_data = video_data
                                     
+                                    # Спробуємо конвертувати для кращої якості
                                     try:
-                                        # 1. Отримуємо метадані через ffprobe
-                                        probe = subprocess.run([
-                                            'ffprobe', '-v', 'quiet', '-print_format', 'json',
-                                            '-show_streams', '-show_format', input_path
-                                        ], capture_output=True, timeout=15)
+                                        import subprocess
+                                        import tempfile
                                         
-                                        if probe.returncode == 0:
-                                            info = json_module.loads(probe.stdout.decode())
-                                            for s in info.get('streams', []):
-                                                if s.get('codec_type') == 'video':
-                                                    width = int(s.get('width', 0)) or None
-                                                    height = int(s.get('height', 0)) or None
-                                                    break
-                                            dur = info.get('format', {}).get('duration')
-                                            if dur:
-                                                duration = int(float(dur))
+                                        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+                                            tmp.write(video_data)
+                                            input_path = tmp.name
+                                        output_path = input_path + '_out.mp4'
                                         
-                                        # 2. Конвертуємо в оптимальний H.264 для Telegram
-                                        subprocess.run([
+                                        process = subprocess.run([
                                             'ffmpeg', '-y', '-i', input_path,
-                                            '-c:v', 'libx264', '-crf', '18', '-preset', 'medium',
+                                            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
                                             '-c:a', 'aac', '-b:a', '192k',
                                             '-movflags', '+faststart',
                                             '-pix_fmt', 'yuv420p',
                                             output_path
-                                        ], capture_output=True, timeout=180)
+                                        ], capture_output=True, timeout=300)
                                         
-                                        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                                        if process.returncode == 0 and os.path.exists(output_path):
                                             out_size = os.path.getsize(output_path)
-                                            if out_size <= 50 * 1024 * 1024:
+                                            if 0 < out_size <= 50 * 1024 * 1024:
                                                 with open(output_path, 'rb') as f:
                                                     final_data = f.read()
                                                 logger.info(f"Video converted: {len(video_data)/1024/1024:.1f}MB -> {out_size/1024/1024:.1f}MB")
-                                            else:
-                                                logger.warning(f"Converted video too large: {out_size/1024/1024:.1f}MB")
-                                    except Exception as conv_err:
-                                        logger.warning(f"Video conversion error: {conv_err}")
-                                    finally:
+                                        else:
+                                            logger.warning(f"FFmpeg failed: {process.stderr.decode()[:200]}")
+                                        
                                         for p in [input_path, output_path]:
                                             if os.path.exists(p):
                                                 os.unlink(p)
+                                    except Exception as conv_err:
+                                        logger.warning(f"Video conversion skipped: {conv_err}")
                                     
+                                    # Відправляємо
                                     video_file = BufferedInputFile(final_data, filename="video.mp4")
-                                    sent_message = await bot.send_video(
-                                        telegram_id, video_file,
-                                        caption=msg.get("text_content"),
-                                        width=width, height=height,
-                                        duration=duration,
-                                        supports_streaming=True
-                                    )
+                                    try:
+                                        sent_message = await bot.send_video(
+                                            telegram_id, video_file,
+                                            caption=msg.get("text_content"),
+                                            supports_streaming=True
+                                        )
+                                    except Exception as send_err:
+                                        logger.warning(f"send_video failed: {send_err}, trying send_document")
+                                        video_file2 = BufferedInputFile(final_data, filename="video.mp4")
+                                        sent_message = await bot.send_document(
+                                            telegram_id, video_file2,
+                                            caption=msg.get("text_content")
+                                        )
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
