@@ -422,9 +422,19 @@ async def send_expert_messages():
                     if msg["content_type"] == "text" and msg.get("text_content"):
                         sent_message = await bot.send_message(telegram_id, msg["text_content"])
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
-                        sent_message = await bot.send_photo(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    photo_data = await resp.read()
+                                    photo_file = BufferedInputFile(photo_data, filename="photo.jpg")
+                                    sent_message = await bot.send_photo(telegram_id, photo_file, caption=msg.get("text_content"))
                     elif msg["content_type"] == "video" and msg.get("file_url"):
-                        sent_message = await bot.send_video(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    video_data = await resp.read()
+                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                    sent_message = await bot.send_video(telegram_id, video_file, caption=msg.get("text_content"))
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
@@ -469,7 +479,12 @@ async def send_expert_messages():
                                     
                                     sent_message = await bot.send_voice(telegram_id, voice_file)
                     elif msg["content_type"] == "document" and msg.get("file_url"):
-                        sent_message = await bot.send_document(telegram_id, msg["file_url"], caption=msg.get("text_content"))
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(msg["file_url"]) as resp:
+                                if resp.status == 200:
+                                    doc_data = await resp.read()
+                                    doc_file = BufferedInputFile(doc_data, filename=msg.get("file_name", "document"))
+                                    sent_message = await bot.send_document(telegram_id, doc_file, caption=msg.get("text_content"))
                     elif msg["content_type"] == "video_note" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
