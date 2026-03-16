@@ -1957,7 +1957,8 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     if (!selectedClient) return;
     
     let publicUrl = templateUrl;
-    let fileName = caption || 'Медіа';
+    let fileName = 'Медіа';
+    let textContent = caption || null;
     
     // Якщо це файл, а не шаблон - завантажуємо
     if (file) {
@@ -1970,7 +1971,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     }
     
     let contentType = type || (file?.type?.startsWith('image/') ? 'photo' : file?.type?.startsWith('video/') ? 'video' : file?.type?.startsWith('audio/') ? 'voice' : 'document');
-    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: contentType, file_url: publicUrl, file_name: fileName, is_read: false });
+    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: contentType, file_url: publicUrl, file_name: fileName, text_content: textContent, is_read: false });
     loadMessages(selectedClient.id);
   };
 
