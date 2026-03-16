@@ -433,53 +433,17 @@ async def send_expert_messages():
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    final_data = video_data
-                                    
-                                    # Спробуємо конвертувати для кращої якості
-                                    try:
-                                        import subprocess
-                                        import tempfile
-                                        
-                                        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                                            tmp.write(video_data)
-                                            input_path = tmp.name
-                                        output_path = input_path + '_out.mp4'
-                                        
-                                        process = subprocess.run([
-                                            'ffmpeg', '-y', '-i', input_path,
-                                            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
-                                            '-c:a', 'aac', '-b:a', '192k',
-                                            '-movflags', '+faststart',
-                                            '-pix_fmt', 'yuv420p',
-                                            output_path
-                                        ], capture_output=True, timeout=300)
-                                        
-                                        if process.returncode == 0 and os.path.exists(output_path):
-                                            out_size = os.path.getsize(output_path)
-                                            if 0 < out_size <= 50 * 1024 * 1024:
-                                                with open(output_path, 'rb') as f:
-                                                    final_data = f.read()
-                                                logger.info(f"Video converted: {len(video_data)/1024/1024:.1f}MB -> {out_size/1024/1024:.1f}MB")
-                                        else:
-                                            logger.warning(f"FFmpeg failed: {process.stderr.decode()[:200]}")
-                                        
-                                        for p in [input_path, output_path]:
-                                            if os.path.exists(p):
-                                                os.unlink(p)
-                                    except Exception as conv_err:
-                                        logger.warning(f"Video conversion skipped: {conv_err}")
-                                    
-                                    # Відправляємо
-                                    video_file = BufferedInputFile(final_data, filename="video.mp4")
+                                    logger.info(f"Downloaded video: {len(video_data)/1024/1024:.1f}MB")
+                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
                                     try:
                                         sent_message = await bot.send_video(
                                             telegram_id, video_file,
                                             caption=msg.get("text_content"),
                                             supports_streaming=True
                                         )
-                                    except Exception as send_err:
-                                        logger.warning(f"send_video failed: {send_err}, trying send_document")
-                                        video_file2 = BufferedInputFile(final_data, filename="video.mp4")
+                                    except Exception as vid_err:
+                                        logger.warning(f"send_video failed ({vid_err}), trying send_document")
+                                        video_file2 = BufferedInputFile(video_data, filename="video.mp4")
                                         sent_message = await bot.send_document(
                                             telegram_id, video_file2,
                                             caption=msg.get("text_content")
