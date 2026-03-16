@@ -434,20 +434,55 @@ async def send_expert_messages():
                                 if resp.status == 200:
                                     video_data = await resp.read()
                                     logger.info(f"Downloaded video: {len(video_data)/1024/1024:.1f}MB")
-                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                    
+                                    # Генеруємо thumbnail
+                                    thumb_input = None
                                     try:
-                                        sent_message = await bot.send_video(
-                                            telegram_id, video_file,
-                                            caption=msg.get("text_content"),
-                                            supports_streaming=True
-                                        )
-                                    except Exception as vid_err:
-                                        logger.warning(f"send_video failed ({vid_err}), trying send_document")
-                                        video_file2 = BufferedInputFile(video_data, filename="video.mp4")
-                                        sent_message = await bot.send_document(
-                                            telegram_id, video_file2,
-                                            caption=msg.get("text_content")
-                                        )
+                                        import subprocess
+                                        import tempfile
+                                        
+                                        input_path = f"/tmp/vid_{msg['id']}.mp4"
+                                        thumb_path = f"/tmp/thumb_{msg['id']}.jpg"
+                                        
+                                        with open(input_path, 'wb') as f:
+                                            f.write(video_data)
+                                        logger.info(f"Saved temp video to {input_path}")
+                                        
+                                        result = subprocess.run([
+                                            'ffmpeg', '-y', '-i', input_path,
+                                            '-ss', '00:00:01', '-vframes', '1',
+                                            '-vf', 'scale=320:-2',
+                                            '-q:v', '3',
+                                            thumb_path
+                                        ], capture_output=True, timeout=30)
+                                        
+                                        logger.info(f"FFmpeg thumb result: returncode={result.returncode}")
+                                        if result.returncode != 0:
+                                            logger.warning(f"FFmpeg stderr: {result.stderr.decode()[:300]}")
+                                        
+                                        if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                                            with open(thumb_path, 'rb') as f:
+                                                thumb_bytes = f.read()
+                                            thumb_input = BufferedInputFile(thumb_bytes, filename="thumb.jpg")
+                                            logger.info(f"Thumbnail created: {len(thumb_bytes)} bytes")
+                                        
+                                        # Cleanup
+                                        for p in [input_path, thumb_path]:
+                                            try:
+                                                if os.path.exists(p):
+                                                    os.unlink(p)
+                                            except:
+                                                pass
+                                    except Exception as th_err:
+                                        logger.warning(f"Thumbnail generation failed: {th_err}")
+                                    
+                                    # Відправляємо як document з thumbnail
+                                    video_file = BufferedInputFile(video_data, filename="video.mp4")
+                                    sent_message = await bot.send_document(
+                                        telegram_id, video_file,
+                                        caption=msg.get("text_content"),
+                                        thumbnail=thumb_input
+                                    )
                     elif msg["content_type"] == "voice" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
