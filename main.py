@@ -3,7 +3,7 @@ import asyncio
 import logging
 import aiohttp
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from typing import Dict
@@ -661,12 +661,97 @@ async def send_expert_messages():
         await asyncio.sleep(2)
 
 
+# ==================== CLIENT REMINDERS ====================
+
+async def send_client_reminders():
+    """Автоматичні нагадування клієнтам за 2 години до діагностики"""
+    while True:
+        try:
+            # Отримуємо всі незавершені нагадування, які ще не відправлені клієнту
+            result = supabase.table("reminders").select(
+                "*, clients(telegram_id, bot_id, expert_id, first_name)"
+            ).eq("is_completed", False).eq("client_notified", False).execute()
+            
+            now = datetime.utcnow()
+            
+            for reminder in (result.data or []):
+                try:
+                    remind_at_str = reminder.get("remind_at")
+                    if not remind_at_str:
+                        continue
+                    
+                    # Парсимо час нагадування
+                    remind_at = datetime.fromisoformat(remind_at_str.replace("Z", "+00:00"))
+                    # Переводимо в UTC для порівняння
+                    if remind_at.tzinfo:
+                        remind_at_utc = remind_at.astimezone(tz=None).replace(tzinfo=None)
+                    else:
+                        remind_at_utc = remind_at
+                    
+                    # Рахуємо час за 2 години до нагадування
+                    notify_time = remind_at_utc - timedelta(hours=2)
+                    
+                    # Якщо зараз >= час нотифікації (за 2 години до)
+                    if now >= notify_time:
+                        telegram_id = reminder.get("clients", {}).get("telegram_id")
+                        client_bot_id = reminder.get("clients", {}).get("bot_id")
+                        expert_id = reminder.get("clients", {}).get("expert_id")
+                        client_name = reminder.get("clients", {}).get("first_name", "")
+                        reminder_text = reminder.get("reminder_text", "")
+                        
+                        if not telegram_id or not client_bot_id:
+                            continue
+                        
+                        # Знаходимо бота
+                        bot_entry = None
+                        for token, data in active_bots.items():
+                            if data["bot_id"] == client_bot_id:
+                                bot_entry = data
+                                break
+                        
+                        if not bot_entry:
+                            continue
+                        
+                        # Форматуємо час для повідомлення (київський час)
+                        from zoneinfo import ZoneInfo
+                        kyiv_time = remind_at.astimezone(ZoneInfo("Europe/Kyiv"))
+                        time_str = kyiv_time.strftime("%H:%M")
+                        date_str = kyiv_time.strftime("%d.%m")
+                        
+                        # Відправляємо повідомлення клієнту
+                        message_text = (
+                            f"🔔 Нагадування!\n\n"
+                            f"У вас сьогодні заплановано діагностику о {time_str} ({date_str}).\n\n"
+                            f"📋 {reminder_text}\n\n"
+                            f"Будь ласка, будьте на зв'язку 🤍"
+                        )
+                        
+                        await bot_entry["bot"].send_message(telegram_id, message_text)
+                        
+                        # Позначаємо що клієнт отримав нагадування
+                        supabase.table("reminders").update({
+                            "client_notified": True
+                        }).eq("id", reminder["id"]).execute()
+                        
+                        logger.info(f"Client reminder sent: {client_name} for {remind_at_str}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing reminder {reminder.get('id')}: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error in send_client_reminders: {e}")
+        
+        # Перевіряємо кожні 60 секунд
+        await asyncio.sleep(60)
+
+
 # ==================== FASTAPI ====================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await initialize_all_bots()
     asyncio.create_task(send_expert_messages())
+    asyncio.create_task(send_client_reminders())
     logger.info("Multi-bot server started!")
     yield
     logger.info("Server stopped!")
