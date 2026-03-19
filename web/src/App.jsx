@@ -149,10 +149,11 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
 };
 
 // ==================== CHAT WINDOW ====================
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient, onDeleteMessage }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient, onDeleteMessage, onReact }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
+  const [reactionMsgId, setReactionMsgId] = useState(null);
   const [reminderText, setReminderText] = useState('');
   const [reminderDate, setReminderDate] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -449,6 +450,44 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                 {msg.content_type === 'document' && msg.file_url && <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-emerald-400 hover:underline mb-2">📄 {msg.file_name || 'Документ'}</a>}
                 {msg.text_content && <div className="break-words">{msg.text_content}</div>}
                 <div className={`text-xs mt-1 ${msg.direction === 'expert' ? 'text-zinc-500' : 'text-zinc-500'}`}>{formatFullDate(msg.created_at)}</div>
+                {/* Реакції */}
+                {msg.reactions && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {msg.reactions.split(',').map((r, i) => {
+                      const isExpert = r.startsWith('expert:');
+                      const emoji = isExpert ? r.replace('expert:', '') : r;
+                      return (
+                        <span key={i} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-sm ${isExpert ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-zinc-800 border border-zinc-700'}`} title={isExpert ? 'Ваша реакція' : 'Реакція клієнта'}>
+                          {emoji}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* Кнопка додати реакцію (тільки на повідомлення клієнта) */}
+                {msg.direction === 'client' && msg.telegram_message_id && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setReactionMsgId(reactionMsgId === msg.id ? null : msg.id)}
+                      className={`absolute -bottom-3 ${msg.direction === 'client' ? '-right-2' : '-left-2'} w-6 h-6 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 text-zinc-400 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center`}
+                      title="Реакція"
+                    >
+                      😀
+                    </button>
+                    {reactionMsgId === msg.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setReactionMsgId(null)} />
+                        <div className="absolute bottom-6 left-0 z-50 bg-zinc-900 border border-zinc-700 rounded-xl p-2 flex gap-1 shadow-xl">
+                          {['👍', '❤️', '🔥', '👏', '🙏', '😊', '⭐', '💯'].map(emoji => (
+                            <button key={emoji} onClick={() => { onReact(msg.id, emoji); setReactionMsgId(null); }} className="w-8 h-8 hover:bg-zinc-800 rounded-lg flex items-center justify-center text-lg transition">
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -1953,6 +1992,21 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     }
   };
 
+  const handleReact = async (messageId, emoji) => {
+    try {
+      const response = await fetch(`${RAILWAY_API_URL}/api/react/${messageId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji })
+      });
+      if (response.ok) {
+        loadMessages(selectedClient.id);
+      }
+    } catch (err) {
+      console.error('React error:', err);
+    }
+  };
+
   const handleSendFile = async (file, type = null, templateUrl = null, caption = null) => {
     if (!selectedClient) return;
     
@@ -2154,7 +2208,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
               <ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} />
             </div>
             <div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} onDeleteMessage={handleDeleteMessage} />
+              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} onDeleteMessage={handleDeleteMessage} onReact={handleReact} />
             </div>
           </>
         )}
