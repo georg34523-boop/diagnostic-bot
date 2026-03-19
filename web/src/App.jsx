@@ -166,6 +166,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   const [sendingSales, setSendingSales] = useState(false);
   const [salesSuccess, setSalesSuccess] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [replyTo, setReplyTo] = useState(null); // {id, text_content, direction, content_type}
   
   // Template preview states
   const [previewTemplate, setPreviewTemplate] = useState(null);
@@ -204,7 +205,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
 
   if (!client) return <div className="flex-1 flex items-center justify-center bg-black text-zinc-600"><div className="text-center"><div className="text-6xl mb-4 opacity-20">💬</div><div>Оберіть клієнта</div></div></div>;
 
-  const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage); setNewMessage(''); if (textareaRef.current) textareaRef.current.style.height = 'auto'; };
+  const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage, replyTo?.id); setNewMessage(''); setReplyTo(null); if (textareaRef.current) textareaRef.current.style.height = 'auto'; };
   const handleKeyPress = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const handleFileSelect = async (e) => { 
     const file = e.target.files?.[0]; 
@@ -438,9 +439,9 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'} group`}>
+            <div key={msg.id} id={'msg-' + msg.id} className={`flex ${msg.direction === 'expert' ? 'justify-end' : 'justify-start'} group`}>
               <div className={`relative max-w-[75%] md:max-w-md rounded-2xl px-4 py-3 ${msg.direction === 'expert' ? 'bg-white text-black' : 'bg-zinc-900 text-white'}`}>
-                {/* Кнопка видалення */}
+                {/* Кнопки: видалення та відповідь */}
                 <button 
                   onClick={() => onDeleteMessage(msg.id)}
                   className={`absolute -top-2 ${msg.direction === 'expert' ? '-left-2' : '-right-2'} w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center`}
@@ -448,6 +449,27 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                 >
                   ✕
                 </button>
+                <button 
+                  onClick={() => setReplyTo({ id: msg.id, text_content: msg.text_content, direction: msg.direction, content_type: msg.content_type })}
+                  className={`absolute -top-2 ${msg.direction === 'expert' ? '-left-9' : '-right-9'} w-6 h-6 bg-zinc-700 hover:bg-zinc-600 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center`}
+                  title="Відповісти"
+                >
+                  ↩
+                </button>
+                {/* Reply preview */}
+                {msg.reply_to_message_id && (() => {
+                  const replyMsg = messages.find(m => m.id === msg.reply_to_message_id);
+                  if (!replyMsg) return null;
+                  const previewText = replyMsg.text_content 
+                    ? (replyMsg.text_content.length > 60 ? replyMsg.text_content.slice(0, 60) + '...' : replyMsg.text_content) 
+                    : replyMsg.content_type === 'photo' ? '📷 Фото' : replyMsg.content_type === 'voice' ? '🎤 Голосове' : replyMsg.content_type === 'video' ? '🎬 Відео' : replyMsg.content_type === 'video_note' ? '⭕ Кружок' : '📄 Файл';
+                  return (
+                    <div className={`mb-2 pl-3 border-l-2 ${replyMsg.direction === 'client' ? 'border-emerald-400' : 'border-zinc-400'} text-xs ${msg.direction === 'expert' ? 'text-zinc-500' : 'text-zinc-400'} cursor-pointer`} onClick={() => { const el = document.getElementById('msg-' + replyMsg.id); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('ring-2', 'ring-emerald-400'); setTimeout(() => el.classList.remove('ring-2', 'ring-emerald-400'), 2000); } }}>
+                      <div className="font-medium">{replyMsg.direction === 'client' ? (client.first_name || 'Клієнт') : 'Ви'}</div>
+                      <div className="truncate">{previewText}</div>
+                    </div>
+                  );
+                })()}
                 {msg.content_type === 'photo' && msg.file_url && <img src={msg.file_url} alt="" className="rounded-lg mb-2 max-w-full cursor-pointer" onClick={() => window.open(msg.file_url, '_blank')} />}
                 {msg.content_type === 'video' && msg.file_url && <video src={msg.file_url} controls className="rounded-lg mb-2 max-w-full" />}
                 {msg.content_type === 'video_note' && msg.file_url && <video src={msg.file_url} controls className="rounded-full mb-2 w-48 h-48 object-cover" />}
@@ -500,6 +522,20 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         </div>
         
         <div className="p-3 bg-zinc-950 border-t border-zinc-800">
+          {/* Reply preview */}
+          {replyTo && (
+            <div className="mb-2 flex items-center gap-2 bg-zinc-900 rounded-xl px-3 py-2 border-l-4 border-emerald-400">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-emerald-400 font-medium">{replyTo.direction === 'client' ? (client.first_name || 'Клієнт') : 'Ви'}</div>
+                <div className="text-sm text-zinc-400 truncate">
+                  {replyTo.text_content 
+                    ? (replyTo.text_content.length > 50 ? replyTo.text_content.slice(0, 50) + '...' : replyTo.text_content)
+                    : replyTo.content_type === 'photo' ? '📷 Фото' : replyTo.content_type === 'voice' ? '🎤 Голосове' : replyTo.content_type === 'video' ? '🎬 Відео' : '📄 Файл'}
+                </div>
+              </div>
+              <button onClick={() => setReplyTo(null)} className="text-zinc-500 hover:text-white p-1">✕</button>
+            </div>
+          )}
           {/* Hidden file inputs — НЕ внутри скрываемого блока */}
           <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,video/*,audio/*,.pdf,.doc,.docx" className="hidden" />
           
@@ -1986,9 +2022,11 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     if (isMobile) setShowClientList(false);
   };
 
-  const handleSendMessage = async (text) => {
+  const handleSendMessage = async (text, replyToId = null) => {
     if (!selectedClient) return;
-    await supabase.from('messages').insert({ client_id: selectedClient.id, direction: 'expert', content_type: 'text', text_content: text, is_read: false });
+    const msgData = { client_id: selectedClient.id, direction: 'expert', content_type: 'text', text_content: text, is_read: false };
+    if (replyToId) msgData.reply_to_message_id = replyToId;
+    await supabase.from('messages').insert(msgData);
     loadMessages(selectedClient.id);
   };
 
