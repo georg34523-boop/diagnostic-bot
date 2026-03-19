@@ -2050,8 +2050,14 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   const handleStatusChange = async (status) => {
     if (!selectedClient) return;
-    await supabase.from('clients').update({ status }).eq('id', selectedClient.id);
-    setSelectedClient({ ...selectedClient, status });
+    console.log('STATUS CHANGE:', selectedClient.id, '->', status);
+    const { error } = await supabase.from('clients').update({ status }).eq('id', selectedClient.id);
+    if (error) {
+      console.error('STATUS UPDATE ERROR:', error);
+      return;
+    }
+    console.log('STATUS UPDATED OK');
+    setSelectedClient(prev => ({ ...prev, status }));
     loadClients();
   };
 
