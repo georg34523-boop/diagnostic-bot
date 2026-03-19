@@ -180,6 +180,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
   
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
@@ -203,7 +204,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
 
   if (!client) return <div className="flex-1 flex items-center justify-center bg-black text-zinc-600"><div className="text-center"><div className="text-6xl mb-4 opacity-20">💬</div><div>Оберіть клієнта</div></div></div>;
 
-  const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage); setNewMessage(''); };
+  const handleSend = () => { if (!newMessage.trim()) return; onSendMessage(newMessage); setNewMessage(''); if (textareaRef.current) textareaRef.current.style.height = 'auto'; };
   const handleKeyPress = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const handleFileSelect = async (e) => { 
     const file = e.target.files?.[0]; 
@@ -552,13 +553,21 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
                 </svg>
               </button>
               
-              {/* Text input */}
-              <input 
+              {/* Text input — auto-resize textarea */}
+              <textarea 
+                ref={textareaRef}
                 value={newMessage} 
-                onChange={(e) => setNewMessage(e.target.value)} 
-                onKeyPress={handleKeyPress} 
+                onChange={(e) => {
+                  setNewMessage(e.target.value);
+                  // Auto-resize
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); if (textareaRef.current) { textareaRef.current.style.height = 'auto'; } } }}
                 placeholder="Повідомлення..." 
-                className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-700 transition" 
+                rows={1}
+                className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-700 transition resize-none overflow-y-auto"
+                style={{ maxHeight: '150px' }}
               />
               
               {/* Send or Record button */}
