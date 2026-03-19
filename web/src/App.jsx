@@ -1930,6 +1930,12 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     const { data } = await supabase.from('clients').select('*').eq('bot_id', activeBot.id).order('updated_at', { ascending: false });
     if (data) {
       setClients(data);
+      // Оновлюємо selectedClient якщо він є в списку
+      setSelectedClient(prev => {
+        if (!prev) return prev;
+        const updated = data.find(c => c.id === prev.id);
+        return updated || prev;
+      });
       const unread = {};
       const last = {};
       for (const c of data) {
