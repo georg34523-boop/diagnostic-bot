@@ -66,7 +66,10 @@ async def register_webhook(bot: Bot, bot_token: str):
     
     webhook_url = f"{RAILWAY_URL}/webhook/telegram/{bot_token}"
     try:
-        await bot.set_webhook(webhook_url)
+        await bot.set_webhook(
+            webhook_url,
+            allowed_updates=["message", "message_reaction", "message_reaction_count"]
+        )
         logger.info(f"Webhook set for bot: {webhook_url}")
         supabase.table("bots").update({"webhook_set": True}).eq("bot_token", bot_token).execute()
         return True
@@ -344,6 +347,41 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id)
+
+    @dp.message_reaction()
+    async def handle_reaction(event: types.MessageReactionUpdated):
+        """Обробка реакцій від клієнтів"""
+        try:
+            telegram_id = event.user.id if event.user else None
+            if not telegram_id:
+                return
+            
+            message_id = event.message_id
+            
+            # Збираємо нові реакції
+            new_reactions = []
+            for r in (event.new_reaction or []):
+                if hasattr(r, 'emoji') and r.emoji:
+                    new_reactions.append(r.emoji)
+                elif hasattr(r, 'custom_emoji_id') and r.custom_emoji_id:
+                    new_reactions.append(f"custom:{r.custom_emoji_id}")
+            
+            # Знаходимо повідомлення в базі по telegram_message_id
+            result = supabase.table("messages").select("id").eq(
+                "telegram_message_id", message_id
+            ).execute()
+            
+            if result.data:
+                msg_db_id = result.data[0]["id"]
+                reactions_str = ",".join(new_reactions) if new_reactions else None
+                supabase.table("messages").update({
+                    "reactions": reactions_str
+                }).eq("id", msg_db_id).execute()
+                logger.info(f"Reaction updated for message {msg_db_id}: {reactions_str}")
+            else:
+                logger.warning(f"Message not found for telegram_message_id={message_id}")
+        except Exception as e:
+            logger.error(f"Reaction handler error: {e}")
 
 
 async def initialize_bot(bot_data: dict) -> bool:
@@ -864,6 +902,66 @@ async def delete_message_api(message_id: str):
         raise
     except Exception as e:
         logger.error(f"Delete message error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/react/{message_id}")
+async def react_to_message(message_id: str, request: Request):
+    """Поставити реакцію на повідомлення клієнта в Telegram"""
+    try:
+        data = await request.json()
+        emoji = data.get("emoji", "👍")
+        
+        # Отримуємо повідомлення з telegram_message_id і bot_id клієнта
+        msg_result = supabase.table("messages").select("*, clients(telegram_id, bot_id)").eq("id", message_id).execute()
+        if not msg_result.data:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        msg = msg_result.data[0]
+        telegram_message_id = msg.get("telegram_message_id")
+        telegram_id = msg.get("clients", {}).get("telegram_id")
+        client_bot_id = msg.get("clients", {}).get("bot_id")
+        
+        if not telegram_message_id or not telegram_id or not client_bot_id:
+            raise HTTPException(status_code=400, detail="Missing telegram data for reaction")
+        
+        # Знаходимо бота
+        bot_entry = None
+        for token, bot_data in active_bots.items():
+            if bot_data["bot_id"] == client_bot_id:
+                bot_entry = bot_data
+                break
+        
+        if not bot_entry:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        # Ставимо реакцію через Telegram API
+        from aiogram.types import ReactionTypeEmoji
+        await bot_entry["bot"].set_message_reaction(
+            chat_id=telegram_id,
+            message_id=telegram_message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)]
+        )
+        
+        # Зберігаємо реакцію експерта в базу
+        current_reactions = msg.get("reactions") or ""
+        expert_reaction = f"expert:{emoji}"
+        if current_reactions:
+            reactions_list = current_reactions.split(",")
+            # Видаляємо попередню реакцію експерта
+            reactions_list = [r for r in reactions_list if not r.startswith("expert:")]
+            reactions_list.append(expert_reaction)
+            new_reactions = ",".join(reactions_list)
+        else:
+            new_reactions = expert_reaction
+        
+        supabase.table("messages").update({"reactions": new_reactions}).eq("id", message_id).execute()
+        
+        return {"success": True, "emoji": emoji}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"React error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
