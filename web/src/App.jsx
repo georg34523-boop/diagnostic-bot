@@ -400,6 +400,10 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
       
       setSalesSuccess(true);
       setSalesComment('');
+      
+      // Автоматично змінюємо статус на "Передано у ВП"
+      onStatusChange('transferred_to_sales');
+      
       setTimeout(() => {
         setShowSalesModal(false);
         setSalesSuccess(false);
