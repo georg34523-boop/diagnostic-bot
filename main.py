@@ -725,7 +725,22 @@ async def send_client_reminders():
                             f"Будь ласка, будьте на зв'язку 🤍"
                         )
                         
-                        await bot_entry["bot"].send_message(telegram_id, message_text)
+                        sent_msg = await bot_entry["bot"].send_message(telegram_id, message_text)
+                        
+                        # Зберігаємо в messages щоб відображалось в CRM
+                        client_id = reminder.get("client_id")
+                        if client_id:
+                            await save_message(
+                                client_id=client_id,
+                                direction="expert",
+                                content_type="text",
+                                text_content=message_text,
+                                telegram_message_id=sent_msg.message_id if sent_msg else None
+                            )
+                            # Позначаємо як прочитане (бо це автоматичне повідомлення)
+                            supabase.table("messages").update({"is_read": True}).eq(
+                                "client_id", client_id
+                            ).eq("direction", "expert").eq("text_content", message_text).execute()
                         
                         # Позначаємо що клієнт отримав нагадування
                         supabase.table("reminders").update({
