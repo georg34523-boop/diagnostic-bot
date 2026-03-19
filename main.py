@@ -722,7 +722,6 @@ async def send_client_reminders():
                         message_text = (
                             f"🔔 Нагадування!\n\n"
                             f"У вас сьогодні заплановано діагностику о {time_str} ({date_str}).\n\n"
-                            f"📋 {reminder_text}\n\n"
                             f"Будь ласка, будьте на зв'язку 🤍"
                         )
                         
