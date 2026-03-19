@@ -183,7 +183,7 @@ async def get_or_create_client(user: types.User, bot_id: str, expert_id: str, em
 async def save_message(client_id: str, direction: str, content_type: str, 
                        text_content: str = None, file_url: str = None,
                        file_name: str = None, telegram_file_id: str = None,
-                       telegram_message_id: int = None):
+                       telegram_message_id: int = None, reply_to_message_id: str = None):
     """Зберегти повідомлення в базу"""
     message_data = {
         "client_id": client_id,
@@ -196,6 +196,8 @@ async def save_message(client_id: str, direction: str, content_type: str,
         "telegram_message_id": telegram_message_id,
         "is_read": direction == "expert"
     }
+    if reply_to_message_id:
+        message_data["reply_to_message_id"] = reply_to_message_id
     result = supabase.table("messages").insert(message_data).execute()
     supabase.table("clients").update({"updated_at": datetime.utcnow().isoformat()}).eq("id", client_id).execute()
     return result.data[0] if result.data else None
@@ -338,6 +340,15 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
         await save_message(client_id=client["id"], direction="client", content_type="document", text_content=message.caption, file_url=file_url, file_name=document.file_name, telegram_file_id=document.file_id, telegram_message_id=message.message_id)
 
+    async def get_reply_id(message: Message) -> str:
+        """Отримати ID повідомлення в базі, на яке відповідає клієнт"""
+        if message.reply_to_message:
+            reply_tg_id = message.reply_to_message.message_id
+            result = supabase.table("messages").select("id").eq("telegram_message_id", reply_tg_id).execute()
+            if result.data:
+                return result.data[0]["id"]
+        return None
+
     @dp.message(F.text)
     async def handle_text(message: Message):
         telegram_id = message.from_user.id
@@ -346,7 +357,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             await message.answer("⛔ У вас немає доступу.")
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
-        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id)
+        reply_id = await get_reply_id(message)
+        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id, reply_to_message_id=reply_id)
 
     @dp.message_reaction()
     async def handle_reaction(event: types.MessageReactionUpdated):
@@ -457,8 +469,16 @@ async def send_expert_messages():
                 
                 try:
                     sent_message = None
+                    
+                    # Визначаємо reply_to_message_id для Telegram
+                    tg_reply_to = None
+                    if msg.get("reply_to_message_id"):
+                        reply_msg = supabase.table("messages").select("telegram_message_id").eq("id", msg["reply_to_message_id"]).execute()
+                        if reply_msg.data and reply_msg.data[0].get("telegram_message_id"):
+                            tg_reply_to = reply_msg.data[0]["telegram_message_id"]
+                    
                     if msg["content_type"] == "text" and msg.get("text_content"):
-                        sent_message = await bot.send_message(telegram_id, msg["text_content"])
+                        sent_message = await bot.send_message(telegram_id, msg["text_content"], reply_to_message_id=tg_reply_to)
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
