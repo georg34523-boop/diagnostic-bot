@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "python -u generate_knowledge.py && python main.py"]
+CMD ["python", "main.py"]
