@@ -149,7 +149,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
 };
 
 // ==================== CHAT WINDOW ====================
-const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient, onDeleteMessage, onReact }) => {
+const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChange, onNotesChange, onAddReminder, onBack, isMobile, templates, onSendTemplate, onSendToSales, googleSheetUrl, onDeleteClient, onDeleteMessage, onReact, onToggleAI }) => {
   const [newMessage, setNewMessage] = useState('');
   const [notes, setNotes] = useState(client?.notes || '');
   const [showReminder, setShowReminder] = useState(false);
@@ -434,6 +434,16 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
             <div className="min-w-0 flex-1"><div className="font-medium text-white truncate">{client.first_name} {client.last_name}</div><div className="text-sm text-zinc-500 truncate">@{client.telegram_username}</div></div>
           </div>
           <select value={client.status} onChange={(e) => onStatusChange(e.target.value)} className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500">{Object.entries(STATUSES).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}</select>
+          {/* AI Toggle */}
+          <button 
+            onClick={() => onToggleAI(client.id, !client.ai_enabled)}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition flex items-center gap-1.5 ${client.ai_enabled ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400' : 'bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
+            title={client.ai_enabled ? 'AI увімкнено — натисніть щоб вимкнути' : 'AI вимкнено — натисніть щоб увімкнути'}
+          >
+            <span>🤖</span>
+            <span className="hidden sm:inline">{client.ai_enabled ? 'AI' : 'AI'}</span>
+            <span className={`w-2 h-2 rounded-full ${client.ai_enabled ? 'bg-emerald-400' : 'bg-zinc-600'}`}></span>
+          </button>
           <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 md:hidden"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
         </div>
         
@@ -1651,18 +1661,41 @@ const Reminders = ({ reminders, onComplete, onGoToChat }) => {
 };
 
 // ==================== BROADCAST ====================
-const Broadcast = ({ clients, onSendBroadcast }) => {
+const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcast, onClearBroadcasts }) => {
   const [message, setMessage] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const filtered = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
   const toggleStatus = (s) => setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
-  const handleSend = async () => { if (!message.trim() || filtered.length === 0) return; setSending(true); try { const res = await onSendBroadcast(message, filtered.map(c => c.id)); setResult({ success: true, count: res.count }); setMessage(''); } catch (err) { setResult({ success: false }); } setSending(false); };
+  const handleSend = async () => { 
+    if (!message.trim() || filtered.length === 0) return; 
+    if (!confirm(`Надіслати повідомлення ${filtered.length} клієнтам?`)) return;
+    setSending(true); 
+    try { 
+      const res = await onSendBroadcast(message, filtered.map(c => c.id)); 
+      setResult({ success: true, count: res.count }); 
+      setMessage(''); 
+    } catch (err) { 
+      setResult({ success: false }); 
+    } 
+    setSending(false); 
+  };
+  
+  const formatDate = (dateStr) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch { return dateStr; }
+  };
+  
+  const totalSent = broadcasts.reduce((sum, b) => sum + (b.recipients_count || 0), 0);
+  
   return (
     <div className="flex-1 overflow-y-auto bg-black p-6">
       <h2 className="text-2xl font-bold text-white mb-6">Розсилка</h2>
       {result && <div className={`rounded-xl p-4 mb-6 ${result.success ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>{result.success ? `✓ Надіслано ${result.count} клієнтам` : 'Помилка'}<button onClick={() => setResult(null)} className="ml-4">×</button></div>}
+      
       <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
         <h3 className="text-white font-medium mb-4">Отримувачі</h3>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -1671,10 +1704,51 @@ const Broadcast = ({ clients, onSendBroadcast }) => {
         </div>
         <div className="text-zinc-500 text-sm">Отримувачів: <span className="text-white font-medium">{filtered.length}</span></div>
       </div>
-      <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+      
+      <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
         <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Текст повідомлення..." rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-4" />
         <button onClick={handleSend} disabled={sending || !message.trim() || filtered.length === 0} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : 'Надіслати'}</button>
       </div>
+      
+      {/* Статистика */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <div className="text-3xl font-bold text-white">{broadcasts.length}</div>
+          <div className="text-zinc-500 text-sm mt-1">Розсилок всього</div>
+        </div>
+        <div className="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <div className="text-3xl font-bold text-emerald-400">{totalSent}</div>
+          <div className="text-zinc-500 text-sm mt-1">Повідомлень надіслано</div>
+        </div>
+      </div>
+      
+      {/* Історія розсилок */}
+      {broadcasts.length > 0 && (
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800">
+          <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+            <h3 className="text-white font-medium">Історія розсилок</h3>
+            <button onClick={onClearBroadcasts} className="text-xs text-red-400 hover:text-red-300 px-3 py-1 bg-red-500/10 rounded-lg">Очистити все</button>
+          </div>
+          <div className="divide-y divide-zinc-800">
+            {broadcasts.map(b => (
+              <div key={b.id} className="p-4 group">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-white text-sm mb-1 line-clamp-2">{b.message_text}</div>
+                    <div className="flex items-center gap-3 text-xs text-zinc-500">
+                      <span>{formatDate(b.created_at)}</span>
+                      <span className="text-emerald-400">{b.recipients_count} отримувачів</span>
+                    </div>
+                  </div>
+                  <button onClick={() => onDeleteBroadcast(b.id)} className="p-1.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Видалити">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1888,6 +1962,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
   const [templates, setTemplates] = useState([]);
   const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const [reminders, setReminders] = useState([]);
+  const [broadcasts, setBroadcasts] = useState([]);
   const [activeTab, setActiveTab] = useState('chat');
   const [unreadCounts, setUnreadCounts] = useState({});
   const [lastMessages, setLastMessages] = useState({});
@@ -1951,6 +2026,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     loadTemplates();
     loadAuthorizedUsers();
     loadReminders();
+    loadBroadcasts();
     
     const clientsSub = supabase.channel('clients_' + activeBot.id).on('postgres_changes', { event: '*', schema: 'public', table: 'clients', filter: `bot_id=eq.${activeBot.id}` }, () => loadClients()).subscribe();
     const msgSub = supabase.channel('messages_' + activeBot.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
@@ -2005,6 +2081,12 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     setReminders(filtered);
   };
 
+  const loadBroadcasts = async () => {
+    if (!activeBot) return;
+    const { data } = await supabase.from('broadcasts').select('*').eq('bot_id', activeBot.id).order('created_at', { ascending: false }).limit(50);
+    setBroadcasts(data || []);
+  };
+
   const loadMessages = async (clientId) => {
     const { data } = await supabase.from('messages').select('*').eq('client_id', clientId).order('created_at');
     if (data) setMessages(data);
@@ -2024,6 +2106,10 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   const handleSendMessage = async (text, replyToId = null) => {
     if (!selectedClient) return;
+    // Якщо AI увімкнений і експерт пише вручну — автоматично вимикаємо AI (перехват управління)
+    if (selectedClient.ai_enabled) {
+      handleToggleAI(selectedClient.id, false);
+    }
     const msgData = { client_id: selectedClient.id, direction: 'expert', content_type: 'text', text_content: text, is_read: false };
     if (replyToId) msgData.reply_to_message_id = replyToId;
     await supabase.from('messages').insert(msgData);
@@ -2061,6 +2147,22 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
       }
     } catch (err) {
       console.error('React error:', err);
+    }
+  };
+
+  const handleToggleAI = async (clientId, enabled) => {
+    try {
+      const response = await fetch(`${RAILWAY_API_URL}/api/ai-toggle/${clientId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      if (response.ok) {
+        setSelectedClient(prev => prev ? { ...prev, ai_enabled: enabled } : prev);
+        loadClients();
+      }
+    } catch (err) {
+      console.error('AI toggle error:', err);
     }
   };
 
@@ -2164,10 +2266,33 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   const handleSendBroadcast = async (message, clientIds) => {
     let count = 0;
+    const broadcastId = crypto.randomUUID();
+    
     for (const clientId of clientIds) {
-      await supabase.from('messages').insert({ client_id: clientId, direction: 'expert', content_type: 'text', text_content: message, is_read: false });
+      await supabase.from('messages').insert({ 
+        client_id: clientId, 
+        direction: 'expert', 
+        content_type: 'text', 
+        text_content: message, 
+        is_read: false 
+      });
       count++;
     }
+    
+    // Зберігаємо історію розсилки
+    await supabase.from('broadcasts').insert({
+      id: broadcastId,
+      bot_id: activeBot?.id,
+      expert_id: expertId,
+      message_text: message,
+      recipients_count: count,
+      client_ids: clientIds,
+      status_filter: null
+    });
+    
+    // Завантажуємо історію
+    loadBroadcasts();
+    
     return { count };
   };
 
@@ -2271,11 +2396,11 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
               <ClientList clients={clients} selectedClient={selectedClient} onSelectClient={handleSelectClient} unreadCounts={unreadCounts} lastMessages={lastMessages} onClose={() => setShowClientList(false)} />
             </div>
             <div className={`flex-1 min-w-0 ${isMobile && showClientList ? 'hidden' : 'flex'}`}>
-              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} onDeleteMessage={handleDeleteMessage} onReact={handleReact} />
+              <ChatWindow client={selectedClient} messages={messages} onSendMessage={handleSendMessage} onSendFile={handleSendFile} onStatusChange={handleStatusChange} onNotesChange={handleNotesChange} onAddReminder={handleAddReminder} onBack={() => setShowClientList(true)} isMobile={isMobile} templates={templates} onSendTemplate={handleSendMessage} googleSheetUrl={activeBot?.google_sheet_url} onDeleteClient={handleDeleteClient} onDeleteMessage={handleDeleteMessage} onReact={handleReact} onToggleAI={handleToggleAI} />
             </div>
           </>
         )}
-        {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} />}
+        {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} broadcasts={broadcasts} onDeleteBroadcast={async (id) => { await supabase.from('broadcasts').delete().eq('id', id); loadBroadcasts(); }} onClearBroadcasts={async () => { if (!confirm('Очистити всю історію розсилок?')) return; await supabase.from('broadcasts').delete().eq('bot_id', activeBot?.id); loadBroadcasts(); }} />}
         {activeTab === 'analytics' && <Analytics clients={clients} bots={bots} unreadDialogs={unreadDialogs} onPeriodChange={setAnalyticsPeriod} period={analyticsPeriod} />}
         {activeTab === 'settings' && <Settings bots={bots} activeBot={activeBot} expertId={expertId} onBotAdded={handleBotAdded} onBotDeleted={handleBotDeleted} onBotUpdated={handleBotUpdated} authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
