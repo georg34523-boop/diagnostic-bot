@@ -39,6 +39,41 @@ active_bots: Dict[str, dict] = {}
 
 # ==================== HELPER FUNCTIONS ====================
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+async def transcribe_audio(file_bytes: bytes, file_name: str = "audio.ogg") -> str:
+    """Транскрибація аудіо/відео через OpenAI Whisper API"""
+    if not OPENAI_API_KEY:
+        return None
+    try:
+        import aiohttp
+        from aiohttp import FormData
+        
+        data = FormData()
+        data.add_field('file', file_bytes, filename=file_name, content_type='audio/ogg')
+        data.add_field('model', 'whisper-1')
+        data.add_field('language', 'uk')
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                data=data,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    text = result.get("text", "").strip()
+                    if text:
+                        logger.info(f"Transcribed: {text[:100]}...")
+                        return text
+                else:
+                    error = await resp.text()
+                    logger.warning(f"Whisper API error {resp.status}: {error[:200]}")
+    except Exception as e:
+        logger.warning(f"Transcription failed: {e}")
+    return None
+
 def generate_token():
     """Генерація унікального токена"""
     return f"pay_{secrets.token_urlsafe(16)}"
@@ -279,6 +314,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
         await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id, telegram_message_id=message.message_id)
+        # AI Agent
+        await trigger_ai_agent(client, bot_id)
 
     @dp.message(F.video)
     async def handle_video(message: Message):
@@ -306,9 +343,15 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         voice = message.voice
         file = await bot.get_file(voice.file_id)
         file_bytes = await bot.download_file(file.file_path)
+        audio_data = file_bytes.read()
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
-        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="voice", file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id, telegram_message_id=message.message_id)
+        file_url = await upload_file_to_storage(audio_data, file_name)
+        # Транскрибація голосового
+        transcription = await transcribe_audio(audio_data, file_name)
+        text_content = f"[Голосове] {transcription}" if transcription else None
+        await save_message(client_id=client["id"], direction="client", content_type="voice", text_content=text_content, file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id, telegram_message_id=message.message_id)
+        # AI Agent
+        await trigger_ai_agent(client, bot_id)
 
     @dp.message(F.video_note)
     async def handle_video_note(message: Message):
@@ -321,9 +364,13 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         video_note = message.video_note
         file = await bot.get_file(video_note.file_id)
         file_bytes = await bot.download_file(file.file_path)
+        video_data = file_bytes.read()
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
-        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-        await save_message(client_id=client["id"], direction="client", content_type="video_note", file_url=file_url, file_name=file_name, telegram_file_id=video_note.file_id, telegram_message_id=message.message_id)
+        file_url = await upload_file_to_storage(video_data, file_name)
+        # Транскрибація аудіо з кружка
+        transcription = await transcribe_audio(video_data, file_name)
+        text_content = f"[Відео-кружок] {transcription}" if transcription else None
+        await save_message(client_id=client["id"], direction="client", content_type="video_note", text_content=text_content, file_url=file_url, file_name=file_name, telegram_file_id=video_note.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.document)
     async def handle_document(message: Message):
@@ -359,6 +406,32 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         reply_id = await get_reply_id(message)
         await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id, reply_to_message_id=reply_id)
+        # AI Agent
+        await trigger_ai_agent(client, bot_id)
+
+    async def trigger_ai_agent(client: dict, current_bot_id: str):
+        """Викликає AI агента якщо він увімкнений для клієнта"""
+        try:
+            from ai_agent import is_ai_enabled_for_client, get_ai_response, process_ai_actions, get_templates_for_bot
+            
+            if not await is_ai_enabled_for_client(client["id"], supabase):
+                return
+            
+            # Отримуємо історію повідомлень
+            msg_result = supabase.table("messages").select("*").eq("client_id", client["id"]).order("created_at").execute()
+            messages_history = msg_result.data or []
+            
+            # Отримуємо шаблони
+            templates = await get_templates_for_bot(current_bot_id, supabase)
+            
+            # Отримуємо відповідь від AI
+            actions = await get_ai_response(client, messages_history, templates, supabase)
+            
+            if actions:
+                await process_ai_actions(actions, client, bot, supabase, current_bot_id)
+                logger.info(f"AI agent processed {len(actions)} actions for client {client['id']}")
+        except Exception as e:
+            logger.error(f"AI agent trigger error: {e}")
 
     @dp.message_reaction()
     async def handle_reaction(event: types.MessageReactionUpdated):
@@ -440,6 +513,14 @@ async def initialize_all_bots():
 async def send_expert_messages():
     """Відправка повідомлень від експертів клієнтам"""
     processed_ids = set()
+    
+    # При старті позначаємо всі старі непрочитані як прочитані (щоб не відправляти повторно при рестарті)
+    try:
+        old_cutoff = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
+        supabase.table("messages").update({"is_read": True}).eq("direction", "expert").eq("is_read", False).lt("created_at", old_cutoff).execute()
+        logger.info("Marked old unread expert messages as read (prevent re-send on restart)")
+    except Exception as e:
+        logger.warning(f"Failed to mark old messages: {e}")
     
     while True:
         try:
@@ -779,6 +860,118 @@ async def send_client_reminders():
         await asyncio.sleep(60)
 
 
+# ==================== AI AUTO-START DIAGNOSTICS ====================
+
+async def start_ai_diagnostics():
+    """Автоматичний запуск діагностики AI агентом коли настає призначений час"""
+    while True:
+        try:
+            from ai_agent import is_ai_enabled_for_client, get_ai_response, process_ai_actions, get_templates_for_bot
+            
+            # Отримуємо всі незавершені нагадування де AI увімкнений
+            result = supabase.table("reminders").select(
+                "*, clients(id, telegram_id, bot_id, expert_id, first_name, status, ai_enabled, phone)"
+            ).eq("is_completed", False).execute()
+            
+            now = datetime.utcnow()
+            
+            for reminder in (result.data or []):
+                try:
+                    client_data = reminder.get("clients", {})
+                    if not client_data or not client_data.get("ai_enabled"):
+                        continue
+                    
+                    # Перевіряємо чи це нагадування про діагностику (не клієнтське)
+                    if reminder.get("client_notified") is None:
+                        continue
+                    
+                    remind_at_str = reminder.get("remind_at")
+                    if not remind_at_str:
+                        continue
+                    
+                    remind_at = datetime.fromisoformat(remind_at_str.replace("Z", "+00:00"))
+                    if remind_at.tzinfo:
+                        remind_at_utc = remind_at.astimezone(tz=None).replace(tzinfo=None)
+                    else:
+                        remind_at_utc = remind_at
+                    
+                    # Якщо час діагностики настав (± 5 хвилин)
+                    diff_minutes = (now - remind_at_utc).total_seconds() / 60
+                    if -2 <= diff_minutes <= 10:
+                        # Перевіряємо чи вже не починали цю діагностику
+                        # (шукаємо повідомлення "Переглядаю ваші фото" від експерта після часу нагадування)
+                        client_id = client_data.get("id")
+                        check_time = (remind_at_utc - timedelta(minutes=5)).isoformat()
+                        recent_expert = supabase.table("messages").select("id").eq(
+                            "client_id", client_id
+                        ).eq("direction", "expert").gte("created_at", check_time).execute()
+                        
+                        if recent_expert.data and len(recent_expert.data) > 0:
+                            # Вже є повідомлення від експерта — діагностика вже почалась
+                            continue
+                        
+                        logger.info(f"AI auto-starting diagnostic for client {client_id}")
+                        
+                        # Знаходимо бота
+                        client_bot_id = client_data.get("bot_id")
+                        bot_entry = None
+                        for token, data in active_bots.items():
+                            if data["bot_id"] == client_bot_id:
+                                bot_entry = data
+                                break
+                        
+                        if not bot_entry:
+                            continue
+                        
+                        # Створюємо "стартове" повідомлення яке запустить діагностику
+                        start_msg = {
+                            "client_id": client_id,
+                            "direction": "expert",
+                            "content_type": "text",
+                            "text_content": "Переглядаю ваші фото і за хвилинку повертаюсь в чат 😊",
+                            "is_read": False
+                        }
+                        supabase.table("messages").insert(start_msg).execute()
+                        
+                        # Позначаємо нагадування як завершене
+                        supabase.table("reminders").update({
+                            "is_completed": True
+                        }).eq("id", reminder["id"]).execute()
+                        
+                        # Оновлюємо статус клієнта
+                        supabase.table("clients").update({
+                            "status": "diagnostic_scheduled",
+                            "updated_at": datetime.utcnow().isoformat()
+                        }).eq("id", client_id).execute()
+                        
+                        # Чекаємо 3 секунди (поки "переглядає фото")
+                        await asyncio.sleep(3)
+                        
+                        # Отримуємо історію повідомлень
+                        msg_result = supabase.table("messages").select("*").eq(
+                            "client_id", client_id
+                        ).order("created_at").execute()
+                        messages_history = msg_result.data or []
+                        
+                        # Отримуємо шаблони
+                        templates = await get_templates_for_bot(client_bot_id, supabase)
+                        
+                        # Запускаємо AI діагностику
+                        actions = await get_ai_response(client_data, messages_history, templates, supabase)
+                        if actions:
+                            await process_ai_actions(actions, client_data, bot_entry["bot"], supabase, client_bot_id)
+                            logger.info(f"AI diagnostic started for client {client_id}: {len(actions)} actions")
+                        
+                except Exception as e:
+                    logger.error(f"AI diagnostic start error for reminder {reminder.get('id')}: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error in start_ai_diagnostics: {e}")
+        
+        # Перевіряємо кожні 30 секунд
+        await asyncio.sleep(30)
+
+
 # ==================== FASTAPI ====================
 
 @asynccontextmanager
@@ -786,6 +979,7 @@ async def lifespan(app: FastAPI):
     await initialize_all_bots()
     asyncio.create_task(send_expert_messages())
     asyncio.create_task(send_client_reminders())
+    asyncio.create_task(start_ai_diagnostics())
     logger.info("Multi-bot server started!")
     yield
     logger.info("Server stopped!")
@@ -1081,6 +1275,21 @@ async def react_to_message(message_id: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"React error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/ai-toggle/{client_id}")
+async def toggle_ai(client_id: str, request: Request):
+    """Увімкнути/вимкнути AI для клієнта"""
+    try:
+        data = await request.json()
+        enabled = data.get("enabled", False)
+        
+        supabase.table("clients").update({"ai_enabled": enabled}).eq("id", client_id).execute()
+        
+        return {"success": True, "ai_enabled": enabled}
+    except Exception as e:
+        logger.error(f"AI toggle error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
