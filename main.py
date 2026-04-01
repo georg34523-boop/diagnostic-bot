@@ -36,12 +36,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Зберігаємо активні боти: {bot_token: {"bot": Bot, "dp": Dispatcher, "bot_id": uuid, "expert_id": uuid}}
 active_bots: Dict[str, dict] = {}
 
-# Ескалаційний бот (для відповідей Світлани на питання AI)
-ESCALATION_BOT_TOKEN = os.getenv("ESCALATION_BOT_TOKEN", "")
-ESCALATION_CHAT_ID = os.getenv("ESCALATION_CHAT_ID", "")  # Telegram ID Світлани
-escalation_bot: Bot = None
-escalation_dp: Dispatcher = None
-
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -795,6 +789,26 @@ async def send_client_reminders():
                     else:
                         remind_at_utc = remind_at
                     
+                    # Рахуємо скільки часу до діагностики
+                    time_until = (remind_at_utc - now).total_seconds() / 3600  # в годинах
+                    
+                    # Якщо до діагностики менше 3 годин — не надсилаємо нагадування
+                    # (діагностика на сьогодні, записалися нещодавно)
+                    if time_until < 3 and time_until > 0:
+                        # Просто позначаємо як відправлене, не турбуємо клієнта
+                        supabase.table("reminders").update({
+                            "client_notified": True
+                        }).eq("id", reminder["id"]).execute()
+                        logger.info(f"Skipped reminder (less than 3h until diagnostic): {reminder.get('id')}")
+                        continue
+                    
+                    # Якщо діагностика вже минула — теж пропускаємо
+                    if time_until < 0:
+                        supabase.table("reminders").update({
+                            "client_notified": True
+                        }).eq("id", reminder["id"]).execute()
+                        continue
+                    
                     # Рахуємо час за 2 години до нагадування
                     notify_time = remind_at_utc - timedelta(hours=2)
                     
@@ -978,251 +992,14 @@ async def start_ai_diagnostics():
         await asyncio.sleep(30)
 
 
-# ==================== ESCALATION BOT ====================
-
-async def initialize_escalation_bot():
-    """Ініціалізуємо бота для ескалації питань до Світлани"""
-    global escalation_bot, escalation_dp
-    
-    if not ESCALATION_BOT_TOKEN:
-        logger.warning("ESCALATION_BOT_TOKEN not set, escalation bot disabled")
-        return
-    
-    try:
-        escalation_bot = Bot(token=ESCALATION_BOT_TOKEN)
-        escalation_dp = Dispatcher()
-        
-        bot_info = await escalation_bot.get_me()
-        logger.info(f"Escalation bot initialized: @{bot_info.username}")
-        
-        # Обробник /start
-        @escalation_dp.message(CommandStart())
-        async def esc_start(message: Message):
-            await message.answer(
-                "👋 Це бот для відповідей на питання клієнтів.\n\n"
-                "Коли AI не знає відповідь, він пересилає питання сюди.\n"
-                "Відповідайте текстом, голосовим або кружком — і відповідь автоматично піде клієнту.\n\n"
-                f"Ваш Telegram ID: {message.from_user.id}"
-            )
-        
-        # Обробник текстових відповідей (reply на ескалацію)
-        @escalation_dp.message(F.text)
-        async def esc_handle_text(message: Message):
-            if not message.reply_to_message:
-                await message.answer("↩️ Щоб відповісти на питання, натисніть Reply на повідомлення з питанням")
-                return
-            
-            # Шукаємо ескалацію по telegram_message_id
-            escalation = await find_escalation_by_tg_message(message.reply_to_message.message_id)
-            if not escalation:
-                await message.answer("❌ Не знайдено ескалацію для цього повідомлення")
-                return
-            
-            from ai_agent import process_escalation_response
-            await process_escalation_response(
-                escalation["id"],
-                response_text=message.text,
-                response_media=None,
-                supabase_client=supabase
-            )
-            await message.answer("✅ Відповідь відправлена клієнту (текст переформулюється AI)")
-        
-        # Обробник голосових
-        @escalation_dp.message(F.voice)
-        async def esc_handle_voice(message: Message):
-            if not message.reply_to_message:
-                await message.answer("↩️ Натисніть Reply на питання")
-                return
-            
-            escalation = await find_escalation_by_tg_message(message.reply_to_message.message_id)
-            if not escalation:
-                await message.answer("❌ Не знайдено ескалацію")
-                return
-            
-            # Скачуємо голосове і зберігаємо в storage
-            voice = message.voice
-            file = await escalation_bot.get_file(voice.file_id)
-            file_bytes = await escalation_bot.download_file(file.file_path)
-            audio_data = file_bytes.read()
-            file_name = f"esc_{escalation['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
-            file_url = await upload_file_to_storage(audio_data, file_name)
-            
-            # Транскрибуємо для можливого текстового супроводу
-            transcription = await transcribe_audio(audio_data, file_name)
-            
-            from ai_agent import process_escalation_response
-            await process_escalation_response(
-                escalation["id"],
-                response_text=None,
-                response_media={
-                    "type": "voice",
-                    "file_url": file_url,
-                    "file_name": file_name,
-                    "text_content": f"[Голосове] {transcription}" if transcription else None
-                },
-                supabase_client=supabase
-            )
-            await message.answer("✅ Голосове відправлено клієнту як є")
-        
-        # Обробник кружків
-        @escalation_dp.message(F.video_note)
-        async def esc_handle_video_note(message: Message):
-            if not message.reply_to_message:
-                await message.answer("↩️ Натисніть Reply на питання")
-                return
-            
-            escalation = await find_escalation_by_tg_message(message.reply_to_message.message_id)
-            if not escalation:
-                await message.answer("❌ Не знайдено ескалацію")
-                return
-            
-            video_note = message.video_note
-            file = await escalation_bot.get_file(video_note.file_id)
-            file_bytes = await escalation_bot.download_file(file.file_path)
-            video_data = file_bytes.read()
-            file_name = f"esc_{escalation['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_circle.mp4"
-            file_url = await upload_file_to_storage(video_data, file_name)
-            
-            # Транскрибуємо
-            transcription = await transcribe_audio(video_data, file_name)
-            
-            from ai_agent import process_escalation_response
-            await process_escalation_response(
-                escalation["id"],
-                response_text=None,
-                response_media={
-                    "type": "video_note",
-                    "file_url": file_url,
-                    "file_name": file_name,
-                    "text_content": f"[Відео-кружок] {transcription}" if transcription else None
-                },
-                supabase_client=supabase
-            )
-            await message.answer("✅ Кружок відправлено клієнту як є")
-        
-        # Обробник фото
-        @escalation_dp.message(F.photo)
-        async def esc_handle_photo(message: Message):
-            if not message.reply_to_message:
-                await message.answer("↩️ Натисніть Reply на питання")
-                return
-            
-            escalation = await find_escalation_by_tg_message(message.reply_to_message.message_id)
-            if not escalation:
-                await message.answer("❌ Не знайдено ескалацію")
-                return
-            
-            photo = message.photo[-1]
-            file = await escalation_bot.get_file(photo.file_id)
-            file_bytes = await escalation_bot.download_file(file.file_path)
-            file_name = f"esc_{escalation['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-            file_url = await upload_file_to_storage(file_bytes.read(), file_name)
-            
-            from ai_agent import process_escalation_response
-            
-            # Якщо є caption — переформулюємо текст + фото окремо
-            if message.caption:
-                await process_escalation_response(
-                    escalation["id"],
-                    response_text=message.caption,
-                    response_media={
-                        "type": "photo",
-                        "file_url": file_url,
-                        "file_name": file_name
-                    },
-                    supabase_client=supabase
-                )
-            else:
-                await process_escalation_response(
-                    escalation["id"],
-                    response_text=None,
-                    response_media={
-                        "type": "photo",
-                        "file_url": file_url,
-                        "file_name": file_name
-                    },
-                    supabase_client=supabase
-                )
-            await message.answer("✅ Фото відправлено клієнту")
-        
-        # Реєструємо webhook для ескалаційного бота
-        if RAILWAY_URL:
-            esc_webhook_url = f"{RAILWAY_URL}/webhook/escalation"
-            await escalation_bot.set_webhook(esc_webhook_url)
-            logger.info(f"Escalation bot webhook set: {esc_webhook_url}")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize escalation bot: {e}")
-
-
-async def find_escalation_by_tg_message(telegram_message_id: int) -> dict:
-    """Знаходимо ескалацію по telegram_message_id відправленого повідомлення"""
-    try:
-        result = supabase.table("escalations").select("*").eq(
-            "telegram_message_id", telegram_message_id
-        ).eq("status", "pending").execute()
-        if result.data:
-            return result.data[0]
-    except Exception as e:
-        logger.error(f"Find escalation error: {e}")
-    return None
-
-
-async def send_escalations_to_expert():
-    """Фонова задача: відправляємо нові ескалації Світлані в бот"""
-    while True:
-        try:
-            if not escalation_bot or not ESCALATION_CHAT_ID:
-                await asyncio.sleep(10)
-                continue
-            
-            # Знаходимо нові ескалації (status=pending, telegram_message_id IS NULL)
-            result = supabase.table("escalations").select(
-                "*, clients(first_name, last_name, telegram_username)"
-            ).eq("status", "pending").is_("telegram_message_id", "null").execute()
-            
-            for esc in (result.data or []):
-                try:
-                    client = esc.get("clients", {})
-                    client_name = f"{client.get('first_name', '')} {client.get('last_name', '')}".strip()
-                    username = client.get("telegram_username", "")
-                    
-                    text = (
-                        f"❓ Питання від клієнта\n\n"
-                        f"👤 {client_name}"
-                        f"{f' (@{username})' if username else ''}\n\n"
-                        f"📝 {esc['question']}\n\n"
-                        f"↩️ Відповідайте Reply на це повідомлення"
-                    )
-                    
-                    sent = await escalation_bot.send_message(int(ESCALATION_CHAT_ID), text)
-                    
-                    # Зберігаємо telegram_message_id
-                    supabase.table("escalations").update({
-                        "telegram_message_id": sent.message_id
-                    }).eq("id", esc["id"]).execute()
-                    
-                    logger.info(f"Escalation sent to expert: {esc['id']}")
-                    
-                except Exception as e:
-                    logger.error(f"Error sending escalation {esc.get('id')}: {e}")
-            
-        except Exception as e:
-            logger.error(f"Error in send_escalations_to_expert: {e}")
-        
-        await asyncio.sleep(5)
-
-
 # ==================== FASTAPI ====================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await initialize_all_bots()
-    await initialize_escalation_bot()
     asyncio.create_task(send_expert_messages())
     asyncio.create_task(send_client_reminders())
     asyncio.create_task(start_ai_diagnostics())
-    asyncio.create_task(send_escalations_to_expert())
     logger.info("Multi-bot server started!")
     yield
     logger.info("Server stopped!")
@@ -1267,22 +1044,6 @@ async def telegram_webhook(bot_token: str, request: Request):
         return {"ok": True}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/webhook/escalation")
-async def escalation_webhook(request: Request):
-    """Webhook для ескалаційного бота"""
-    if not escalation_bot or not escalation_dp:
-        raise HTTPException(status_code=404, detail="Escalation bot not initialized")
-    
-    try:
-        update_data = await request.json()
-        update = types.Update(**update_data)
-        await escalation_dp.feed_update(escalation_bot, update)
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"Escalation webhook error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
