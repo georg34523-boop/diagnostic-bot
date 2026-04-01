@@ -1202,7 +1202,7 @@ async def send_escalations_to_expert():
                         "telegram_message_id": sent.message_id
                     }).eq("id", esc["id"]).execute()
                     
-                    logger.info(f"Escalation sent to {len(chat_ids)} recipients: {esc['id']}")
+                    logger.info(f"Escalation sent to expert: {esc['id']}")
                     
                 except Exception as e:
                     logger.error(f"Error sending escalation {esc.get('id')}: {e}")
