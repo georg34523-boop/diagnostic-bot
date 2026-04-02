@@ -789,26 +789,6 @@ async def send_client_reminders():
                     else:
                         remind_at_utc = remind_at
                     
-                    # Рахуємо скільки часу до діагностики
-                    time_until = (remind_at_utc - now).total_seconds() / 3600  # в годинах
-                    
-                    # Якщо до діагностики менше 3 годин — не надсилаємо нагадування
-                    # (діагностика на сьогодні, записалися нещодавно)
-                    if time_until < 3 and time_until > 0:
-                        # Просто позначаємо як відправлене, не турбуємо клієнта
-                        supabase.table("reminders").update({
-                            "client_notified": True
-                        }).eq("id", reminder["id"]).execute()
-                        logger.info(f"Skipped reminder (less than 3h until diagnostic): {reminder.get('id')}")
-                        continue
-                    
-                    # Якщо діагностика вже минула — теж пропускаємо
-                    if time_until < 0:
-                        supabase.table("reminders").update({
-                            "client_notified": True
-                        }).eq("id", reminder["id"]).execute()
-                        continue
-                    
                     # Рахуємо час за 2 години до нагадування
                     notify_time = remind_at_utc - timedelta(hours=2)
                     
