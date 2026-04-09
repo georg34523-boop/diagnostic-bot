@@ -943,22 +943,28 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
 // ==================== ANALYTICS ====================
 const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExpertView = true }) => {
   const [selectedBot, setSelectedBot] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const periods = [
     { value: 'today', label: 'Сьогодні' },
+    { value: 'yesterday', label: 'Вчора' },
     { value: 'week', label: 'Тиждень' },
     { value: 'month', label: 'Місяць' },
-    { value: 'all', label: 'Весь час' }
+    { value: 'all', label: 'Весь час' },
+    { value: 'custom', label: '📅 Обрати' }
   ];
   
-  // Фільтрація по періоду
   const getFilteredByPeriod = (data) => {
     if (period === 'all') return data;
     const now = new Date();
-    let start;
-    if (period === 'today') start = new Date(now.setHours(0,0,0,0));
+    let start, end = new Date();
+    if (period === 'today') { start = new Date(); start.setHours(0,0,0,0); }
+    else if (period === 'yesterday') { start = new Date(); start.setDate(start.getDate() - 1); start.setHours(0,0,0,0); end = new Date(); end.setHours(0,0,0,0); }
     else if (period === 'week') start = new Date(now - 7*24*60*60*1000);
-    else start = new Date(now - 30*24*60*60*1000);
-    return data.filter(c => new Date(c.created_at) >= start);
+    else if (period === 'month') start = new Date(now - 30*24*60*60*1000);
+    else if (period === 'custom' && customFrom) { start = new Date(customFrom); end = customTo ? new Date(customTo + 'T23:59:59') : new Date(); }
+    else return data;
+    return data.filter(c => { const d = new Date(c.created_at); return d >= start && d <= end; });
   };
   
   // Фільтрація по боту
@@ -1054,6 +1060,14 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
           ))}
         </div>
       </div>
+      
+      {period === 'custom' && (
+        <div className="flex flex-wrap gap-3 mb-6 items-center">
+          <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500" />
+          <span className="text-zinc-500">—</span>
+          <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500" />
+        </div>
+      )
       
       {/* Bot Filter */}
       {bots.length > 1 && (
@@ -1764,6 +1778,71 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const [welcomeMessage, setWelcomeMessage] = useState('');
   const [googleSheetUrl, setGoogleSheetUrl] = useState('');
   const [username, setUsername] = useState('');
+  const [knowledgeItems, setKnowledgeItems] = useState([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [knowledgeText, setKnowledgeText] = useState('');
+  const [knowledgeTitle, setKnowledgeTitle] = useState('');
+  const [knowledgeCategory, setKnowledgeCategory] = useState('expert_voice');
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  useEffect(() => { if (activeSection === 'knowledge') loadKnowledge(); }, [activeSection]);
+
+  const loadKnowledge = async () => {
+    setKnowledgeLoading(true);
+    try {
+      const resp = await fetch(`${RAILWAY_API_URL}/api/knowledge`);
+      const data = await resp.json();
+      if (data.success) setKnowledgeItems(data.items || []);
+    } catch (e) { console.error(e); }
+    setKnowledgeLoading(false);
+  };
+
+  const handleUploadAudio = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadingAudio(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('category', knowledgeCategory);
+      formData.append('title', knowledgeTitle || file.name);
+      const resp = await fetch(`${RAILWAY_API_URL}/api/knowledge/upload-audio`, { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (data.success) { loadKnowledge(); setKnowledgeTitle(''); } else alert('Помилка: ' + (data.detail || 'невідома'));
+    } catch (e) { alert('Помилка: ' + e.message); }
+    setUploadingAudio(false);
+    e.target.value = '';
+  };
+
+  const handleAddText = async () => {
+    if (!knowledgeText.trim()) return;
+    try {
+      const resp = await fetch(`${RAILWAY_API_URL}/api/knowledge/add-text`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: knowledgeCategory, title: knowledgeTitle, content: knowledgeText }) });
+      const data = await resp.json();
+      if (data.success) { loadKnowledge(); setKnowledgeText(''); setKnowledgeTitle(''); }
+    } catch (e) { alert('Помилка: ' + e.message); }
+  };
+
+  const handleDeleteKnowledge = async (key) => {
+    if (!confirm('Видалити запис?')) return;
+    try { await fetch(`${RAILWAY_API_URL}/api/knowledge/${key}`, { method: 'DELETE' }); loadKnowledge(); } catch (e) { console.error(e); }
+  };
+
+  const handleGenerateLink = async () => {
+    if (!activeBot) return;
+    setLinkLoading(true);
+    try {
+      const resp = await fetch(`${RAILWAY_API_URL}/api/create-token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bot_id: activeBot.id }) });
+      const data = await resp.json();
+      if (data.payment_url) { setGeneratedLink(data.payment_url); setLinkCopied(false); }
+    } catch (e) { alert('Помилка: ' + e.message); }
+    setLinkLoading(false);
+  };
+
+  const copyLink = () => { navigator.clipboard.writeText(generatedLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
   
   useEffect(() => {
     if (editingBot) {
@@ -1846,8 +1925,10 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
       <h2 className="text-2xl font-bold text-white mb-6">Налаштування</h2>
       
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-        <button onClick={() => setActiveSection('bots')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'bots' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🤖 Мої боти</button>
-        <button onClick={() => setActiveSection('users')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'users' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>👥 Авторизовані</button>
+        <button onClick={() => setActiveSection('bots')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'bots' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🤖 Боти</button>
+        <button onClick={() => setActiveSection('users')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'users' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>👥 Доступ</button>
+        <button onClick={() => setActiveSection('knowledge')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'knowledge' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🧠 База знань</button>
+        <button onClick={() => setActiveSection('links')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'links' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🔗 Посилання</button>
       </div>
 
       {activeSection === 'bots' && (
@@ -1945,6 +2026,87 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
               </div>
             ))}
             {authorizedUsers.length === 0 && <div className="text-center text-zinc-600 py-12">Немає користувачів</div>}
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'knowledge' && (
+        <div className="space-y-6">
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <h3 className="text-lg font-medium text-white mb-4">📥 Додати в базу знань</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block">Категорія</label>
+                <select value={knowledgeCategory} onChange={(e) => setKnowledgeCategory(e.target.value)} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white focus:outline-none focus:border-emerald-500">
+                  <option value="expert_voice">🎤 Голосове експерта</option>
+                  <option value="diagnostics">🔬 Методологія діагностики</option>
+                  <option value="sales">💼 Продажі / скрипти</option>
+                  <option value="faq">❓ Відповіді на питання</option>
+                  <option value="escalation">⚠️ Правила ескалації</option>
+                  <option value="general">📋 Загальне</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-zinc-400 mb-2 block">Назва (необов'язково)</label>
+                <input type="text" value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="Наприклад: Як аналізувати носогубку" className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500" />
+              </div>
+              <div className="bg-zinc-800/50 rounded-xl p-4">
+                <p className="text-sm text-zinc-400 mb-3">🎤 Завантажити голосове (транскрибація автоматично)</p>
+                <label className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-medium cursor-pointer transition ${uploadingAudio ? 'bg-zinc-700 text-zinc-400' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}`}>
+                  {uploadingAudio ? '⏳ Транскрибую...' : '📎 Обрати аудіо файл'}
+                  <input type="file" accept="audio/*,.ogg,.mp3,.wav,.m4a" onChange={handleUploadAudio} className="hidden" disabled={uploadingAudio} />
+                </label>
+              </div>
+              <div className="bg-zinc-800/50 rounded-xl p-4">
+                <p className="text-sm text-zinc-400 mb-3">📝 Або додати текст вручну</p>
+                <textarea value={knowledgeText} onChange={(e) => setKnowledgeText(e.target.value)} rows={4} placeholder="Введіть текст..." className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-3" />
+                <button onClick={handleAddText} disabled={!knowledgeText.trim()} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl transition">Додати текст</button>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-lg font-medium text-white">📚 Записи ({knowledgeItems.length})</h3>
+            {knowledgeLoading && <div className="text-center text-zinc-500 py-8">Завантаження...</div>}
+            {!knowledgeLoading && knowledgeItems.length === 0 && <div className="text-center text-zinc-600 py-12">База знань порожня</div>}
+            {knowledgeItems.map(item => (
+              <div key={item.key} className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">{item.source_type === 'voice' ? '🎤' : '📝'} {item.category}</span>
+                      {item.title && <span className="text-sm font-medium text-white truncate">{item.title}</span>}
+                    </div>
+                    <p className="text-sm text-zinc-400 line-clamp-3">{item.content}</p>
+                    <p className="text-xs text-zinc-600 mt-2">{formatFullDate(item.created_at)}</p>
+                  </div>
+                  <button onClick={() => handleDeleteKnowledge(item.key)} className="ml-3 text-red-400 hover:text-red-300 text-sm flex-shrink-0">🗑</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'links' && activeBot && (
+        <div className="space-y-6">
+          <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+            <h3 className="text-lg font-medium text-white mb-2">🔗 Генерація посилань</h3>
+            <p className="text-zinc-400 text-sm mb-6">Одноразове посилання для клієнта на бот @{activeBot.bot_username}</p>
+            <button onClick={handleGenerateLink} disabled={linkLoading} className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-semibold rounded-xl transition mb-4">
+              {linkLoading ? '⏳ Генерую...' : '🔗 Створити посилання'}
+            </button>
+            {generatedLink && (
+              <div className="bg-black rounded-xl p-4 border border-zinc-800">
+                <p className="text-xs text-zinc-400 mb-2">Посилання:</p>
+                <div className="flex gap-2">
+                  <input type="text" value={generatedLink} readOnly className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm font-mono truncate" />
+                  <button onClick={copyLink} className={`px-4 py-2 rounded-lg font-medium text-sm transition flex-shrink-0 ${linkCopied ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-white hover:bg-zinc-700'}`}>
+                    {linkCopied ? '✅' : '📋'}
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-600 mt-2">Одноразове, діє 24 години</p>
+              </div>
+            )}
           </div>
         </div>
       )}
