@@ -513,6 +513,7 @@ async def initialize_all_bots():
 async def send_expert_messages():
     """Відправка повідомлень від експертів клієнтам"""
     processed_ids = set()
+    empty_polls = 0  # Лічильник пустих опитувань для адаптивного інтервалу
     
     # При старті позначаємо всі старі непрочитані як прочитані (щоб не відправляти повторно при рестарті)
     try:
@@ -525,6 +526,11 @@ async def send_expert_messages():
     while True:
         try:
             result = supabase.table("messages").select("*, clients(telegram_id, expert_id)").eq("direction", "expert").eq("is_read", False).execute()
+            
+            if not result.data:
+                empty_polls += 1
+            else:
+                empty_polls = 0
             
             for msg in result.data:
                 if msg["id"] in processed_ids:
@@ -759,7 +765,14 @@ async def send_expert_messages():
         except Exception as e:
             logger.error(f"Error in send_expert_messages: {e}")
         
-        await asyncio.sleep(2)
+        # Адаптивний інтервал: якщо нічого нема — рідше опитуємо (до 10 сек)
+        # Якщо щойно були повідомлення — швидше (3 сек)
+        if empty_polls == 0:
+            await asyncio.sleep(3)
+        elif empty_polls < 5:
+            await asyncio.sleep(5)
+        else:
+            await asyncio.sleep(10)
 
 
 # ==================== CLIENT REMINDERS ====================
@@ -968,8 +981,8 @@ async def start_ai_diagnostics():
         except Exception as e:
             logger.error(f"Error in start_ai_diagnostics: {e}")
         
-        # Перевіряємо кожні 30 секунд
-        await asyncio.sleep(30)
+        # Перевіряємо кожні 60 секунд
+        await asyncio.sleep(60)
 
 
 # ==================== FASTAPI ====================
@@ -1290,6 +1303,109 @@ async def toggle_ai(client_id: str, request: Request):
         return {"success": True, "ai_enabled": enabled}
     except Exception as e:
         logger.error(f"AI toggle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== БАЗА ЗНАНЬ API ====================
+
+@app.post("/api/knowledge/upload-audio")
+async def upload_knowledge_audio(request: Request):
+    """Завантажити голосове повідомлення в базу знань (транскрибація через Whisper)"""
+    try:
+        form = await request.form()
+        audio_file = form.get("file")
+        category = form.get("category", "expert_voice")
+        title = form.get("title", "")
+        
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        file_bytes = await audio_file.read()
+        file_name = audio_file.filename or "audio.ogg"
+        
+        # Транскрибуємо через Whisper
+        transcription = await transcribe_audio(file_bytes, file_name)
+        
+        if not transcription:
+            raise HTTPException(status_code=500, detail="Transcription failed")
+        
+        # Зберігаємо в ai_knowledge
+        key = f"{category}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        
+        result = supabase.table("ai_knowledge").insert({
+            "key": key,
+            "category": category,
+            "title": title or file_name,
+            "content": transcription,
+            "source_type": "voice",
+            "created_at": datetime.utcnow().isoformat()
+        }).execute()
+        
+        logger.info(f"Knowledge added: {key}, {len(transcription)} chars")
+        
+        return {
+            "success": True,
+            "key": key,
+            "transcription": transcription,
+            "chars": len(transcription)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Knowledge upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/knowledge/add-text")
+async def add_knowledge_text(request: Request):
+    """Додати текстовий запис в базу знань"""
+    try:
+        data = await request.json()
+        category = data.get("category", "expert_text")
+        title = data.get("title", "")
+        content = data.get("content", "")
+        
+        if not content:
+            raise HTTPException(status_code=400, detail="No content provided")
+        
+        key = f"{category}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        
+        result = supabase.table("ai_knowledge").insert({
+            "key": key,
+            "category": category,
+            "title": title,
+            "content": content,
+            "source_type": "text",
+            "created_at": datetime.utcnow().isoformat()
+        }).execute()
+        
+        return {"success": True, "key": key}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Knowledge add error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/knowledge")
+async def get_knowledge():
+    """Отримати всі записи бази знань"""
+    try:
+        result = supabase.table("ai_knowledge").select("*").order("created_at", desc=True).execute()
+        return {"success": True, "items": result.data or []}
+    except Exception as e:
+        logger.error(f"Knowledge get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/knowledge/{key}")
+async def delete_knowledge(key: str):
+    """Видалити запис з бази знань"""
+    try:
+        supabase.table("ai_knowledge").delete().eq("key", key).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Knowledge delete error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
