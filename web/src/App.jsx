@@ -1067,8 +1067,8 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
           <span className="text-zinc-500">—</span>
           <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500" />
         </div>
-      )
-      
+      )}
+
       {/* Bot Filter */}
       {bots.length > 1 && (
         <div className="mb-6">
