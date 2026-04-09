@@ -319,9 +319,18 @@ async def get_ai_response(client_data: dict, messages_history: list, templates: 
         
         knowledge_context = ""
         try:
-            kb_result = supabase_client.table("ai_knowledge").select("content").eq("key", "expert_guide").execute()
-            if kb_result.data and kb_result.data[0].get("content"):
-                knowledge_context = f"\n\n## ДОДАТКОВА БАЗА ЗНАНЬ:\n{kb_result.data[0]['content']}"
+            kb_result = supabase_client.table("ai_knowledge").select("category,title,content").execute()
+            if kb_result.data:
+                knowledge_parts = []
+                for kb in kb_result.data:
+                    cat = kb.get("category", "")
+                    title = kb.get("title", "")
+                    content = kb.get("content", "")
+                    if content:
+                        header = f"[{cat}] {title}" if title else f"[{cat}]"
+                        knowledge_parts.append(f"{header}:\n{content}")
+                if knowledge_parts:
+                    knowledge_context = "\n\n## БАЗА ЗНАНЬ ЕКСПЕРТА:\n" + "\n\n---\n".join(knowledge_parts)
         except Exception as kb_err:
             logger.warning(f"Failed to load knowledge base: {kb_err}")
         
@@ -533,9 +542,29 @@ async def process_ai_actions(actions: list, client: dict, bot, supabase_client, 
                         kyiv_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
                         remind_at = kyiv_dt.isoformat()
                     except: remind_at = f"{date_str}T{time_str}:00+03:00"
-                    supabase_client.table("reminders").insert({"client_id": client_id, "reminder_text": f"Діагностика о {time_str}", "remind_at": remind_at, "is_completed": False, "client_notified": False}).execute()
+                    
+                    # Перевіряємо чи до діагностики більше 3 годин
+                    # Якщо менше — створюємо reminder але одразу позначаємо як notified (не слати напоминання)
+                    now_kyiv = datetime.now(KYIV_TZ)
+                    try:
+                        diag_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=KYIV_TZ)
+                        hours_until = (diag_dt - now_kyiv).total_seconds() / 3600
+                        skip_notification = hours_until < 3
+                    except:
+                        skip_notification = False
+                    
+                    supabase_client.table("reminders").insert({
+                        "client_id": client_id,
+                        "reminder_text": f"Діагностика о {time_str}",
+                        "remind_at": remind_at,
+                        "is_completed": False,
+                        "client_notified": skip_notification  # True якщо < 3h — не слати напоминання
+                    }).execute()
                     supabase_client.table("clients").update({"status": "diagnostic_scheduled"}).eq("id", client_id).execute()
-                    logger.info(f"Scheduled diagnostic for {client_id}: {date_str} {time_str}")
+                    if skip_notification:
+                        logger.info(f"Scheduled diagnostic for {client_id}: {date_str} {time_str} (no reminder, < 3h)")
+                    else:
+                        logger.info(f"Scheduled diagnostic for {client_id}: {date_str} {time_str}")
             elif action["type"] == "escalate":
                 question = action.get("question", "")
                 if question:
