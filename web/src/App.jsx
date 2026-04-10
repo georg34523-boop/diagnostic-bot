@@ -1837,7 +1837,9 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
     try {
       const resp = await fetch(`${RAILWAY_API_URL}/api/create-token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bot_id: activeBot.id }) });
       const data = await resp.json();
-      if (data.payment_url) { setGeneratedLink(data.payment_url); setLinkCopied(false); }
+      const link = data.payment_url || data.bot_link;
+      if (link) { setGeneratedLink(link); setLinkCopied(false); }
+      else { alert('Сервер не повернув посилання: ' + JSON.stringify(data)); }
     } catch (e) { alert('Помилка: ' + e.message); }
     setLinkLoading(false);
   };
@@ -2371,9 +2373,23 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
 
   const handleAddReminder = async (text, date) => {
     if (!selectedClient) return;
-    // Додаємо київський timezone до дати (datetime-local не має timezone)
-    // Це гарантує що 15:00 в інпуті = 15:00 київського часу
-    const kyivDate = date + ':00+02:00'; // Формат ISO з timezone
+    // Динамічно визначаємо offset Києва (+03:00 літом, +02:00 зимою)
+    // datetime-local не має timezone, тому додаємо актуальний київський offset
+    const [datePart, timePart] = date.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute] = timePart.split(':').map(Number);
+    const tempDate = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    let offset = '+02:00';
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Europe/Kyiv',
+        timeZoneName: 'longOffset'
+      }).formatToParts(tempDate);
+      const tzName = parts.find(p => p.type === 'timeZoneName')?.value || '';
+      const match = tzName.match(/GMT([+-]\d{2}:\d{2})/);
+      if (match) offset = match[1];
+    } catch (e) { console.error('Offset detection failed:', e); }
+    const kyivDate = `${date}:00${offset}`;
     const { error } = await supabase.from('reminders').insert({ 
       client_id: selectedClient.id, 
       reminder_text: text, 
