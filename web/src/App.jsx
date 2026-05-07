@@ -11,6 +11,7 @@ const STATUSES = {
   diagnostic_scheduled: { label: 'Діагн. запланована', short: '📅 Заплан', color: 'bg-sky-500' },
   diagnostic_done: { label: 'Діагн. проведена', short: '✅ Провед', color: 'bg-emerald-500' },
   transferred_to_sales: { label: 'Передано у ВП', short: '💼 У ВП', color: 'bg-violet-500' },
+  ignored: { label: 'Ігнор', short: '🚫 Ігнор', color: 'bg-red-500' },
 };
 
 const formatDate = (d) => { if (!d) return ''; const date = new Date(d); const now = new Date(); const diff = Math.floor((now - date) / 60000); if (diff < 1) return 'щойно'; if (diff < 60) return diff + ' хв'; if (diff < 1440) return Math.floor(diff / 60) + ' год'; if (diff < 10080) return Math.floor(diff / 1440) + ' дн'; return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short', timeZone: 'Europe/Kyiv' }); };
@@ -991,7 +992,7 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
   const uniqueClients = selectedBot === 'all' ? getUniqueClients(filteredByPeriod) : filteredByBot;
   
   // Статуси
-  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
+  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0, ignored: 0 };
   uniqueClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
   
   const total = uniqueClients.length;
@@ -1033,7 +1034,7 @@ const Analytics = ({ clients, bots, unreadDialogs, onPeriodChange, period, isExp
   const getBotStats = () => {
     return bots.map(bot => {
       const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
-      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0, ignored: 0 };
       botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
       const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.transferred_to_sales;
       return {
@@ -3074,7 +3075,7 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   }
   
   // Статуси
-  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
+  const statusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0, ignored: 0 };
   displayClients.forEach(c => { if (statusCounts[c.status] !== undefined) statusCounts[c.status]++; });
   
   const total = displayClients.length;
@@ -3122,7 +3123,7 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   const getExpertStats = () => {
     return experts.map(expert => {
       const expertClients = getExpertUniqueClients(filteredByPeriod, expert.id);
-      const expertStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
+      const expertStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0, ignored: 0 };
       expertClients.forEach(c => { if (expertStatusCounts[c.status] !== undefined) expertStatusCounts[c.status]++; });
       const expertConverted = expertStatusCounts.diagnostic_done + expertStatusCounts.transferred_to_sales;
       const expertBots = bots.filter(b => b.expert_id === expert.id);
@@ -3140,7 +3141,7 @@ const AdminAnalytics = ({ experts, bots, allClients }) => {
   const getBotStats = () => {
     return displayBots.map(bot => {
       const botClients = filteredByPeriod.filter(c => c.bot_id === bot.id);
-      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0 };
+      const botStatusCounts = { new: 0, diagnostic_scheduled: 0, diagnostic_done: 0, transferred_to_sales: 0, ignored: 0 };
       botClients.forEach(c => { if (botStatusCounts[c.status] !== undefined) botStatusCounts[c.status]++; });
       const botConverted = botStatusCounts.diagnostic_done + botStatusCounts.transferred_to_sales;
       return {
