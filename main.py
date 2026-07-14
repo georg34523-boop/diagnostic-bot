@@ -1177,7 +1177,7 @@ async def create_token_api(request: Request):
             if bot_result.data:
                 bot_username = bot_result.data[0]["bot_username"]
         
-        return {"success": True, "token": token, "bot_link": f"https://t.me/{bot_username}?start={token}"}
+        return {"success": True, "token": token, "bot_link": f"https://telegram.me/{bot_username}?start={token}"}
     except Exception as e:
         logger.error(f"Create token error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
