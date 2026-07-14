@@ -1955,7 +1955,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
-                  <a href={`https://t.me/${bot.bot_username}`} target="_blank" className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Відкрити бота</a>
+                  <a href={`https://telegram.me/${bot.bot_username}`} target="_blank" className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Відкрити бота</a>
                   <button onClick={() => { setEditingBot(bot); setWelcomeMessage(bot.welcome_message || ''); setGoogleSheetUrl(bot.google_sheet_url || ''); }} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm transition">Налаштувати</button>
                   <button onClick={() => handleDeleteBot(bot.id)} className="px-4 py-2 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/20 transition">Видалити</button>
                 </div>
@@ -1994,7 +1994,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
             <div className="bg-zinc-800/50 rounded-xl p-4 mb-6">
               <h4 className="font-medium text-white mb-2">📝 Інструкція:</h4>
               <ol className="text-zinc-400 text-sm space-y-1">
-                <li>1. Відкрийте <a href="https://t.me/BotFather" target="_blank" className="text-emerald-400 hover:underline">@BotFather</a></li>
+                <li>1. Відкрийте <a href="https://telegram.me/BotFather" target="_blank" className="text-emerald-400 hover:underline">@BotFather</a></li>
                 <li>2. Надішліть <code className="bg-zinc-700 px-1 rounded">/newbot</code></li>
                 <li>3. Введіть назву та username бота</li>
                 <li>4. Скопіюйте токен нижче</li>
