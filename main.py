@@ -10,7 +10,7 @@ from typing import Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.types import Message, BufferedInputFile
+from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from supabase import create_client, Client
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -261,7 +261,193 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         if result.data and result.data[0].get("welcome_message"):
             return result.data[0]["welcome_message"]
         return "👋 Вітаю! Надішліть фото для діагностики 📸"
-    
+
+    # ============ ВОРОНКА / ОПИТУВАЛЬНИК (ONBOARDING) ============
+
+    async def get_bot_config():
+        """Налаштування воронки на рівні бота"""
+        result = supabase.table("bots").select("onboarding_enabled, onboarding_video_url").eq("id", bot_id).execute()
+        if result.data:
+            return result.data[0]
+        return {}
+
+    async def get_onboarding_questions():
+        """Питання воронки, впорядковані за position"""
+        result = supabase.table("onboarding_questions").select("*").eq("bot_id", bot_id).order("position").execute()
+        return result.data or []
+
+    async def get_question_by_position(position: int):
+        questions = await get_onboarding_questions()
+        for q in questions:
+            if q.get("position") == position:
+                return q
+        return None
+
+    def build_options_keyboard(position: int, options: list):
+        """Inline-клавіатура з варіантами відповіді"""
+        rows = []
+        for i, opt in enumerate(options or []):
+            rows.append([InlineKeyboardButton(text=opt, callback_data=f"onb:{position}:{i}")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    async def send_onboarding_question(chat_id: int, client_id: str, question: dict):
+        """Надіслати питання клієнту та зберегти його в CRM як повідомлення експерта"""
+        text = question.get("question_text", "")
+        answer_type = question.get("answer_type", "text")
+        options = question.get("options")
+        markup = None
+        if answer_type == "choice" and options:
+            markup = build_options_keyboard(question.get("position"), options)
+        sent = await bot.send_message(chat_id, text, reply_markup=markup)
+        # Зберігаємо як повідомлення експерта (is_read=True → поллер не надсилатиме повторно)
+        await save_message(client_id=client_id, direction="expert", content_type="text",
+                           text_content=text, telegram_message_id=sent.message_id if sent else None)
+
+    async def send_onboarding_video(chat_id: int, video_url: str):
+        """Надіслати вітальне відео нативно в Telegram"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(video_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        video_file = BufferedInputFile(data, filename="welcome.mp4")
+                        await bot.send_video(chat_id, video_file)
+                        return
+            # fallback — надіслати за URL
+            await bot.send_video(chat_id, video_url)
+        except Exception as e:
+            logger.warning(f"Onboarding video send failed: {e}")
+
+    async def start_onboarding(message: Message, client: dict) -> bool:
+        """Запустити воронку: привітання → відео → перше питання. True якщо запущено."""
+        config = await get_bot_config()
+        if not config.get("onboarding_enabled"):
+            return False
+        questions = await get_onboarding_questions()
+        if not questions:
+            return False
+
+        # 1. Привітання
+        welcome = await get_welcome_message()
+        await message.answer(welcome)
+
+        # 2. Відео (якщо налаштоване)
+        video_url = config.get("onboarding_video_url")
+        if video_url:
+            await send_onboarding_video(message.chat.id, video_url)
+
+        # 3. Перше питання
+        first = questions[0]
+        supabase.table("clients").update({
+            "onboarding_step": first.get("position"),
+            "onboarding_done": False,
+            "onboarding_answers": []
+        }).eq("id", client["id"]).execute()
+        await send_onboarding_question(message.chat.id, client["id"], first)
+        return True
+
+    async def finish_onboarding(chat_id: int, client: dict):
+        """Завершити воронку: статус + фінальне повідомлення клієнту"""
+        supabase.table("clients").update({
+            "onboarding_done": True,
+            "onboarding_step": 0,
+            "status": "diagnostic_scheduled",
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", client["id"]).execute()
+        await bot.send_message(
+            chat_id,
+            "Дякую! 🤍 Усі відповіді та фото отримані.\n\n"
+            "Найближчим часом я перегляну вашу анкету та фото і повернуся до вас з діагностикою. 💛"
+        )
+
+    async def record_answer_and_advance(message: Message, client: dict, answer_text: str) -> bool:
+        """Зберегти відповідь на поточне питання і надіслати наступне. True якщо оброблено воронкою."""
+        step = client.get("onboarding_step") or 0
+        if step <= 0 or client.get("onboarding_done"):
+            return False
+
+        current = await get_question_by_position(step)
+        if not current:
+            return False
+
+        # Якщо поточне питання очікує фото — просимо надіслати фото
+        if current.get("answer_type") == "photo":
+            await message.answer("Будь ласка, надішліть фото 📸")
+            return True
+
+        # Зберігаємо відповідь у структурований масив
+        answers = client.get("onboarding_answers") or []
+        answers.append({
+            "position": step,
+            "question": current.get("question_text"),
+            "answer": answer_text
+        })
+
+        # Наступне питання
+        next_q = await get_question_by_position(step + 1)
+        if next_q:
+            supabase.table("clients").update({
+                "onboarding_step": next_q.get("position"),
+                "onboarding_answers": answers
+            }).eq("id", client["id"]).execute()
+            await send_onboarding_question(message.chat.id, client["id"], next_q)
+        else:
+            supabase.table("clients").update({"onboarding_answers": answers}).eq("id", client["id"]).execute()
+            await finish_onboarding(message.chat.id, client)
+        return True
+
+    @dp.callback_query(F.data.startswith("onb:"))
+    async def onboarding_choice(callback: CallbackQuery):
+        """Обробка вибору варіанта відповіді (кнопки)"""
+        try:
+            _, pos_str, idx_str = callback.data.split(":")
+            position = int(pos_str)
+            idx = int(idx_str)
+        except Exception:
+            await callback.answer()
+            return
+
+        telegram_id = callback.from_user.id
+        client = await get_or_create_client(callback.from_user, bot_id, expert_id)
+
+        # Перевіряємо що клієнт саме на цьому питанні
+        if (client.get("onboarding_step") or 0) != position or client.get("onboarding_done"):
+            await callback.answer()
+            return
+
+        question = await get_question_by_position(position)
+        options = (question or {}).get("options") or []
+        if idx < 0 or idx >= len(options):
+            await callback.answer()
+            return
+        chosen = options[idx]
+
+        # Зберігаємо вибір як повідомлення клієнта (буде видно в CRM, збільшить unread)
+        await save_message(client_id=client["id"], direction="client", content_type="text", text_content=chosen)
+
+        # Прибираємо кнопки, показуємо обраний варіант
+        try:
+            await callback.message.edit_text(f"{question.get('question_text')}\n\n✅ {chosen}")
+        except Exception:
+            pass
+        await callback.answer()
+
+        # Далі — наступне питання
+        # message.chat відсутній у callback напряму, використовуємо callback.message
+        step = position
+        answers = client.get("onboarding_answers") or []
+        answers.append({"position": step, "question": question.get("question_text"), "answer": chosen})
+        next_q = await get_question_by_position(step + 1)
+        if next_q:
+            supabase.table("clients").update({
+                "onboarding_step": next_q.get("position"),
+                "onboarding_answers": answers
+            }).eq("id", client["id"]).execute()
+            await send_onboarding_question(callback.message.chat.id, client["id"], next_q)
+        else:
+            supabase.table("clients").update({"onboarding_answers": answers}).eq("id", client["id"]).execute()
+            await finish_onboarding(callback.message.chat.id, client)
+
     @dp.message(CommandStart())
     async def cmd_start(message: Message, command: CommandObject):
         telegram_id = message.from_user.id
@@ -275,15 +461,17 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                 email = result["data"].get("email")
                 phone = result["data"].get("phone")
                 await authorize_user(telegram_id, bot_id, expert_id, username, email, phone)
-                await get_or_create_client(message.from_user, bot_id, expert_id, email, phone)
-                
-                current_welcome = await get_welcome_message()
-                await message.answer(current_welcome)
+                client = await get_or_create_client(message.from_user, bot_id, expert_id, email, phone)
+
+                # Запускаємо воронку-опитувальник; якщо вимкнена — звичайне привітання
+                if not await start_onboarding(message, client):
+                    current_welcome = await get_welcome_message()
+                    await message.answer(current_welcome)
                 return
             else:
                 await message.answer(f"❌ {result['error']}\n\nЯкщо виникли проблеми, напишіть в підтримку.")
                 return
-        
+
         if not await is_authorized(username, telegram_id, bot_id):
             await message.answer(
                 "👋 Вітаю!\n\n"
@@ -291,10 +479,15 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                 "Для отримання доступу оплатіть діагностику на сайті."
             )
             return
-        
-        await get_or_create_client(message.from_user, bot_id, expert_id)
-        current_welcome = await get_welcome_message()
-        await message.answer(current_welcome)
+
+        client = await get_or_create_client(message.from_user, bot_id, expert_id)
+        # Повторний /start: якщо воронку ще не пройдено — запускаємо, інакше просто привітання
+        if client.get("onboarding_done"):
+            current_welcome = await get_welcome_message()
+            await message.answer(current_welcome)
+        elif not await start_onboarding(message, client):
+            current_welcome = await get_welcome_message()
+            await message.answer(current_welcome)
 
     @dp.message(Command("help"))
     async def cmd_help(message: Message):
@@ -314,6 +507,12 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         file_url = await upload_file_to_storage(file_bytes.read(), file_name)
         await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id, telegram_message_id=message.message_id)
+        # Воронка: фото на фінальному кроці завершує анкету (перше фото), решту просто зберігаємо
+        if (client.get("onboarding_step") or 0) > 0 and not client.get("onboarding_done"):
+            current = await get_question_by_position(client.get("onboarding_step"))
+            if current and current.get("answer_type") == "photo":
+                await finish_onboarding(message.chat.id, client)
+            return
         # AI Agent
         await trigger_ai_agent(client, bot_id)
 
@@ -350,6 +549,13 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         transcription = await transcribe_audio(audio_data, file_name)
         text_content = f"[Голосове] {transcription}" if transcription else None
         await save_message(client_id=client["id"], direction="client", content_type="voice", text_content=text_content, file_url=file_url, file_name=file_name, telegram_file_id=voice.file_id, telegram_message_id=message.message_id)
+        # Воронка: голосове як відповідь на питання (використовуємо транскрибацію)
+        if (client.get("onboarding_step") or 0) > 0 and not client.get("onboarding_done"):
+            if transcription:
+                await record_answer_and_advance(message, client, transcription)
+            else:
+                await message.answer("Не вдалося розпізнати голосове. Будь ласка, напишіть відповідь текстом 🙏")
+            return
         # AI Agent
         await trigger_ai_agent(client, bot_id)
 
@@ -406,6 +612,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         reply_id = await get_reply_id(message)
         await save_message(client_id=client["id"], direction="client", content_type="text", text_content=message.text, telegram_message_id=message.message_id, reply_to_message_id=reply_id)
+        # Воронка: якщо клієнт її проходить — це відповідь на питання (AI не викликаємо)
+        if (client.get("onboarding_step") or 0) > 0 and not client.get("onboarding_done"):
+            await record_answer_and_advance(message, client, message.text)
+            return
         # AI Agent
         await trigger_ai_agent(client, bot_id)
 
