@@ -1788,8 +1788,97 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const [generatedLink, setGeneratedLink] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // ---- Воронка (onboarding) ----
+  const [onbEnabled, setOnbEnabled] = useState(false);
+  const [onbWelcome, setOnbWelcome] = useState('');
+  const [onbVideoUrl, setOnbVideoUrl] = useState('');
+  const [onbQuestions, setOnbQuestions] = useState([]);
+  const [onbLoading, setOnbLoading] = useState(false);
+  const [onbSaving, setOnbSaving] = useState(false);
+  const [onbUploadingVideo, setOnbUploadingVideo] = useState(false);
+  const [onbSaved, setOnbSaved] = useState(false);
+  const onbVideoRef = useRef(null);
 
   useEffect(() => { if (activeSection === 'knowledge') loadKnowledge(); }, [activeSection]);
+  useEffect(() => { if (activeSection === 'onboarding' && activeBot) loadOnboarding(); }, [activeSection, activeBot?.id]);
+
+  const loadOnboarding = async () => {
+    if (!activeBot) return;
+    setOnbLoading(true);
+    try {
+      const { data: botData } = await supabase.from('bots').select('onboarding_enabled, onboarding_video_url, welcome_message').eq('id', activeBot.id).single();
+      if (botData) {
+        setOnbEnabled(!!botData.onboarding_enabled);
+        setOnbVideoUrl(botData.onboarding_video_url || '');
+        setOnbWelcome(botData.welcome_message || '');
+      }
+      const { data: qData } = await supabase.from('onboarding_questions').select('*').eq('bot_id', activeBot.id).order('position');
+      setOnbQuestions((qData || []).map(q => ({ ...q, optionsText: Array.isArray(q.options) ? q.options.join('\n') : '' })));
+    } catch (e) { console.error(e); }
+    setOnbLoading(false);
+  };
+
+  const handleUploadOnbVideo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeBot) return;
+    setOnbUploadingVideo(true);
+    try {
+      const fileName = `onboarding/${activeBot.id}_${Date.now()}_${file.name}`;
+      const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, file);
+      if (error) throw error;
+      const { data: urlData } = supabase.storage.from('diagnostic-files').getPublicUrl(fileName);
+      setOnbVideoUrl(urlData.publicUrl);
+    } catch (err) { alert('Помилка завантаження відео: ' + err.message); }
+    setOnbUploadingVideo(false);
+    e.target.value = '';
+  };
+
+  const addOnbQuestion = () => {
+    const nextPos = onbQuestions.length ? Math.max(...onbQuestions.map(q => q.position || 0)) + 1 : 1;
+    setOnbQuestions([...onbQuestions, { id: `new_${Date.now()}`, bot_id: activeBot?.id, position: nextPos, question_text: '', answer_type: 'text', options: null, optionsText: '', _isNew: true }]);
+  };
+  const updateOnbQuestion = (idx, field, value) => {
+    setOnbQuestions(prev => prev.map((q, i) => i === idx ? { ...q, [field]: value } : q));
+  };
+  const removeOnbQuestion = (idx) => {
+    setOnbQuestions(prev => prev.filter((_, i) => i !== idx).map((q, i) => ({ ...q, position: i + 1 })));
+  };
+  const moveOnbQuestion = (idx, dir) => {
+    const j = idx + dir;
+    if (j < 0 || j >= onbQuestions.length) return;
+    const arr = [...onbQuestions];
+    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    setOnbQuestions(arr.map((q, i) => ({ ...q, position: i + 1 })));
+  };
+
+  const handleSaveOnboarding = async () => {
+    if (!activeBot) return;
+    setOnbSaving(true);
+    try {
+      // 1. Налаштування бота
+      await supabase.from('bots').update({
+        onboarding_enabled: onbEnabled,
+        onboarding_video_url: onbVideoUrl || null,
+        welcome_message: onbWelcome
+      }).eq('id', activeBot.id);
+      // 2. Питання: повністю перезаписуємо для цього бота
+      await supabase.from('onboarding_questions').delete().eq('bot_id', activeBot.id);
+      const rows = onbQuestions
+        .filter(q => (q.question_text || '').trim())
+        .map((q, i) => {
+          const opts = q.answer_type === 'choice'
+            ? (q.optionsText || '').split('\n').map(s => s.trim()).filter(Boolean)
+            : null;
+          return { bot_id: activeBot.id, position: i + 1, question_text: q.question_text, answer_type: q.answer_type, options: opts };
+        });
+      if (rows.length) await supabase.from('onboarding_questions').insert(rows);
+      onBotUpdated({ ...activeBot, onboarding_enabled: onbEnabled, onboarding_video_url: onbVideoUrl, welcome_message: onbWelcome });
+      setOnbSaved(true);
+      setTimeout(() => setOnbSaved(false), 2000);
+      loadOnboarding();
+    } catch (err) { alert('Помилка збереження: ' + err.message); }
+    setOnbSaving(false);
+  };
 
   const loadKnowledge = async () => {
     setKnowledgeLoading(true);
@@ -1932,6 +2021,7 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
         <button onClick={() => setActiveSection('users')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'users' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>👥 Доступ</button>
         <button onClick={() => setActiveSection('knowledge')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'knowledge' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🧠 База знань</button>
         <button onClick={() => setActiveSection('links')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'links' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🔗 Посилання</button>
+        <button onClick={() => setActiveSection('onboarding')} className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition ${activeSection === 'onboarding' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}`}>🎬 Воронка</button>
       </div>
 
       {activeSection === 'bots' && (
@@ -2111,6 +2201,94 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
               </div>
             )}
           </div>
+        </div>
+      )}
+      {activeSection === 'onboarding' && activeBot && (
+        <div className="space-y-6">
+          {onbLoading ? (
+            <div className="text-center text-zinc-500 py-12">Завантаження...</div>
+          ) : (
+            <>
+              {/* Увімкнення + збереження */}
+              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h3 className="text-lg font-medium text-white">🎬 Воронка-опитувальник</h3>
+                    <p className="text-zinc-400 text-sm mt-1">Привітання → відео → питання по черзі → фото. Для бота @{activeBot.bot_username}</p>
+                  </div>
+                  <button onClick={() => setOnbEnabled(!onbEnabled)} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${onbEnabled ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400' : 'bg-zinc-800 border border-zinc-700 text-zinc-400'}`}>
+                    <span className={`w-2 h-2 rounded-full ${onbEnabled ? 'bg-emerald-400' : 'bg-zinc-500'}`}></span>
+                    {onbEnabled ? 'Увімкнено' : 'Вимкнено'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Привітальне повідомлення */}
+              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                <label className="text-sm text-zinc-400 mb-2 block">👋 Привітальне повідомлення (перше після оплати)</label>
+                <textarea value={onbWelcome} onChange={(e) => setOnbWelcome(e.target.value)} rows={7} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none text-sm" placeholder="Вітаю! Дякую, що записалися..." />
+              </div>
+
+              {/* Відео */}
+              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                <label className="text-sm text-zinc-400 mb-3 block">🎥 Вітальне відео (надсилається після привітання)</label>
+                {onbVideoUrl && (
+                  <div className="mb-3">
+                    <video src={onbVideoUrl} controls className="w-full max-w-sm rounded-xl bg-black" />
+                    <button onClick={() => setOnbVideoUrl('')} className="mt-2 text-xs text-red-400 hover:text-red-300">Видалити відео</button>
+                  </div>
+                )}
+                <input type="file" ref={onbVideoRef} onChange={handleUploadOnbVideo} accept="video/*" className="hidden" />
+                <button onClick={() => onbVideoRef.current?.click()} disabled={onbUploadingVideo} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 rounded-xl text-sm transition">
+                  {onbUploadingVideo ? '⏳ Завантаження...' : onbVideoUrl ? '🔄 Замінити відео' : '📎 Завантажити відео'}
+                </button>
+              </div>
+
+              {/* Питання */}
+              <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-white">Питання ({onbQuestions.length})</h3>
+                  <button onClick={addOnbQuestion} className="text-emerald-400 text-sm hover:text-emerald-300">+ Додати питання</button>
+                </div>
+                <div className="space-y-4">
+                  {onbQuestions.map((q, idx) => (
+                    <div key={q.id || idx} className="bg-black/50 rounded-xl p-4 border border-zinc-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-zinc-500 font-medium">Питання {idx + 1}</span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => moveOnbQuestion(idx, -1)} className="p-1 text-zinc-500 hover:text-white" title="Вгору">↑</button>
+                          <button onClick={() => moveOnbQuestion(idx, 1)} className="p-1 text-zinc-500 hover:text-white" title="Вниз">↓</button>
+                          <button onClick={() => removeOnbQuestion(idx)} className="p-1 text-red-400 hover:text-red-300 ml-1" title="Видалити">✕</button>
+                        </div>
+                      </div>
+                      <textarea value={q.question_text} onChange={(e) => updateOnbQuestion(idx, 'question_text', e.target.value)} rows={2} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm resize-none mb-2" placeholder="Текст питання..." />
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs text-zinc-500">Тип відповіді:</span>
+                        <select value={q.answer_type} onChange={(e) => updateOnbQuestion(idx, 'answer_type', e.target.value)} className="px-3 py-1.5 bg-black border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500">
+                          <option value="text">📝 Текст</option>
+                          <option value="choice">🔘 Варіанти (кнопки)</option>
+                          <option value="photo">📸 Фото</option>
+                        </select>
+                      </div>
+                      {q.answer_type === 'choice' && (
+                        <div>
+                          <label className="text-xs text-zinc-500 mb-1 block">Варіанти (по одному в рядку):</label>
+                          <textarea value={q.optionsText || ''} onChange={(e) => updateOnbQuestion(idx, 'optionsText', e.target.value)} rows={4} className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm resize-none" placeholder={"Варіант 1\nВаріант 2\nВаріант 3"} />
+                        </div>
+                      )}
+                      {q.answer_type === 'photo' && <p className="text-xs text-zinc-600">Бот чекатиме фото. Отримання фото завершує анкету.</p>}
+                    </div>
+                  ))}
+                  {onbQuestions.length === 0 && <div className="text-center text-zinc-600 py-6 text-sm">Немає питань. Додайте перше.</div>}
+                </div>
+              </div>
+
+              {/* Кнопка збереження */}
+              <button onClick={handleSaveOnboarding} disabled={onbSaving} className={`w-full py-3 font-semibold rounded-xl transition ${onbSaved ? 'bg-emerald-500 text-white' : 'bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black'}`}>
+                {onbSaving ? 'Зберігаю...' : onbSaved ? '✅ Збережено' : 'Зберегти воронку'}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
