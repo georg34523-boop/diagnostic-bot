@@ -103,7 +103,7 @@ async def register_webhook(bot: Bot, bot_token: str):
     try:
         await bot.set_webhook(
             webhook_url,
-            allowed_updates=["message", "message_reaction", "message_reaction_count"]
+            allowed_updates=["message", "callback_query", "message_reaction", "message_reaction_count"]
         )
         logger.info(f"Webhook set for bot: {webhook_url}")
         supabase.table("bots").update({"webhook_set": True}).eq("bot_token", bot_token).execute()
@@ -303,18 +303,24 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         await save_message(client_id=client_id, direction="expert", content_type="text",
                            text_content=text, telegram_message_id=sent.message_id if sent else None)
 
-    async def send_onboarding_video(chat_id: int, video_url: str):
-        """Надіслати вітальне відео нативно в Telegram"""
+    async def send_onboarding_video(chat_id: int, video_ref: str):
+        """Надіслати вітальне відео. Приймає або URL (мале відео до 50МБ), або Telegram file_id (велике, без обмеження)."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(video_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        video_file = BufferedInputFile(data, filename="welcome.mp4")
-                        await bot.send_video(chat_id, video_file)
-                        return
-            # fallback — надіслати за URL
-            await bot.send_video(chat_id, video_url)
+            ref = (video_ref or "").strip()
+            if not ref:
+                return
+            if ref.startswith("http://") or ref.startswith("https://"):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(ref) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            video_file = BufferedInputFile(data, filename="welcome.mp4")
+                            await bot.send_video(chat_id, video_file)
+                            return
+                await bot.send_video(chat_id, ref)
+            else:
+                # Telegram file_id — миттєво, без обмеження розміру
+                await bot.send_video(chat_id, ref)
         except Exception as e:
             logger.warning(f"Onboarding video send failed: {e}")
 
@@ -520,6 +526,14 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
     async def handle_video(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
+        # Отримати file_id для налаштування вітального відео воронки (працює до перевірки доступу)
+        if (message.caption or "").strip().lower() in ("/videoid", "/id", "videoid"):
+            await message.answer(
+                f"file_id вашого відео:\n<code>{message.video.file_id}</code>\n\n"
+                f"Скопіюйте його в CRM → Налаштування → 🎬 Воронка → поле «file_id відео».",
+                parse_mode="HTML"
+            )
+            return
         if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
