@@ -1676,25 +1676,43 @@ const Reminders = ({ reminders, onComplete, onGoToChat }) => {
 };
 
 // ==================== BROADCAST ====================
-const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcast, onClearBroadcasts }) => {
+const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcast, onClearBroadcasts, templates = [] }) => {
   const [message, setMessage] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState([]);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
+  // Режим розсилки: текст або шаблон (голосове/кружок/фото/відео)
+  const [mode, setMode] = useState('text');
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [caption, setCaption] = useState('');
+  const [tplFilter, setTplFilter] = useState('all');
+
+  const tplIcon = (t) => t === 'voice' ? '🎤' : t === 'video_note' ? '⭕' : t === 'photo' ? '📷' : t === 'video' ? '🎬' : '📝';
+  const visibleTemplates = templates.filter(t => tplFilter === 'all' || t.type === tplFilter);
+
   const filtered = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
   const toggleStatus = (s) => setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
-  const handleSend = async () => { 
-    if (!message.trim() || filtered.length === 0) return; 
-    if (!confirm(`Надіслати повідомлення ${filtered.length} клієнтам?`)) return;
-    setSending(true); 
-    try { 
-      const res = await onSendBroadcast(message, filtered.map(c => c.id)); 
-      setResult({ success: true, count: res.count }); 
-      setMessage(''); 
-    } catch (err) { 
-      setResult({ success: false }); 
-    } 
-    setSending(false); 
+
+  const canSend = filtered.length > 0 && (mode === 'text' ? !!message.trim() : !!selectedTemplate);
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    const what = mode === 'text' ? 'повідомлення' : `шаблон «${selectedTemplate.title}»`;
+    if (!confirm(`Надіслати ${what} ${filtered.length} клієнтам?`)) return;
+    setSending(true);
+    try {
+      const payload = mode === 'template'
+        ? { type: 'template', template: selectedTemplate, text: caption }
+        : { type: 'text', text: message };
+      const res = await onSendBroadcast(payload, filtered.map(c => c.id));
+      setResult({ success: true, count: res.count });
+      setMessage('');
+      setCaption('');
+      setSelectedTemplate(null);
+    } catch (err) {
+      setResult({ success: false });
+    }
+    setSending(false);
   };
   
   const formatDate = (dateStr) => {
@@ -1721,8 +1739,60 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
       </div>
       
       <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
-        <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Текст повідомлення..." rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-4" />
-        <button onClick={handleSend} disabled={sending || !message.trim() || filtered.length === 0} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : 'Надіслати'}</button>
+        {/* Перемикач: текст / шаблон */}
+        <div className="flex gap-2 mb-4">
+          <button onClick={() => { setMode('text'); setSelectedTemplate(null); }} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${mode === 'text' ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>📝 Текст</button>
+          <button onClick={() => setMode('template')} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${mode === 'template' ? 'bg-emerald-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>📋 Шаблон ({templates.length})</button>
+        </div>
+
+        {mode === 'text' ? (
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Текст повідомлення..." rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-4" />
+        ) : (
+          <div className="mb-4">
+            {/* Фільтр за типом */}
+            <div className="flex flex-wrap gap-1 mb-3">
+              {[['all', 'Всі'], ['voice', '🎤 Голосові'], ['video_note', '⭕ Кружки'], ['photo', '📷 Фото'], ['video', '🎬 Відео'], ['text', '📝 Текст']].map(([val, label]) => (
+                <button key={val} onClick={() => setTplFilter(val)} className={`px-3 py-1.5 rounded-lg text-xs transition ${tplFilter === val ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>{label}</button>
+              ))}
+            </div>
+
+            {/* Список шаблонів */}
+            <div className="max-h-56 overflow-y-auto space-y-2 mb-3">
+              {visibleTemplates.map(t => (
+                <button key={t.id} onClick={() => setSelectedTemplate(t)} className={`w-full text-left px-4 py-3 rounded-xl border transition flex items-center gap-3 ${selectedTemplate?.id === t.id ? 'bg-emerald-500/15 border-emerald-500/50' : 'bg-black border-zinc-800 hover:border-zinc-700'}`}>
+                  <span className="text-xl">{tplIcon(t.type)}</span>
+                  <span className="flex-1 min-w-0 truncate text-white text-sm">{t.title}</span>
+                  {selectedTemplate?.id === t.id && <span className="text-emerald-400">✓</span>}
+                </button>
+              ))}
+              {visibleTemplates.length === 0 && <div className="text-center text-zinc-600 py-6 text-sm">Немає шаблонів цього типу</div>}
+            </div>
+
+            {/* Превью обраного шаблону */}
+            {selectedTemplate && (
+              <div className="bg-black rounded-xl p-4 border border-zinc-800">
+                <div className="text-xs text-zinc-500 mb-2">Превью: {selectedTemplate.title}</div>
+                {selectedTemplate.type === 'voice' && selectedTemplate.file_url && <audio src={selectedTemplate.file_url} controls className="w-full" />}
+                {selectedTemplate.type === 'video_note' && selectedTemplate.file_url && <video src={selectedTemplate.file_url} controls className="w-32 h-32 rounded-full object-cover" />}
+                {selectedTemplate.type === 'photo' && selectedTemplate.file_url && <img src={selectedTemplate.file_url} alt="" className="max-w-48 rounded-lg" />}
+                {selectedTemplate.type === 'video' && selectedTemplate.file_url && <video src={selectedTemplate.file_url} controls className="max-w-64 rounded-lg" />}
+                {selectedTemplate.type === 'text' && <div className="text-zinc-300 text-sm whitespace-pre-wrap">{selectedTemplate.content}</div>}
+
+                {selectedTemplate.type !== 'text' && selectedTemplate.type !== 'voice' && selectedTemplate.type !== 'video_note' && (
+                  <div className="mt-3">
+                    <label className="text-xs text-zinc-500 mb-1 block">Підпис (опційно)</label>
+                    <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={2} placeholder="Текст під медіа..." className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm resize-none" />
+                  </div>
+                )}
+                {(selectedTemplate.type === 'voice' || selectedTemplate.type === 'video_note') && (
+                  <p className="text-xs text-zinc-600 mt-2">Голосові та кружки надсилаються без підпису — таке обмеження Telegram.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={handleSend} disabled={sending || !canSend} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : 'Надіслати'}</button>
       </div>
       
       {/* Статистика */}
@@ -1821,9 +1891,17 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
   const handleUploadOnbVideo = async (e) => {
     const file = e.target.files?.[0];
     if (!file || !activeBot) return;
+    // Telegram-бот не може надіслати відео більше 50 МБ через завантаження — для великих використовуйте file_id
+    if (file.size > 50 * 1024 * 1024) {
+      alert('Відео більше 50 МБ (' + Math.round(file.size / 1024 / 1024) + ' МБ). Бот не зможе надіслати його через завантаження.\n\nВикористайте file_id: надішліть відео своєму боту з підписом /videoid, скопіюйте отриманий id і вставте у поле «file_id відео» нижче.');
+      e.target.value = '';
+      return;
+    }
     setOnbUploadingVideo(true);
     try {
-      const fileName = `onboarding/${activeBot.id}_${Date.now()}_${file.name}`;
+      // Безпечне ім'я файлу (без кирилиці/пробілів — інакше Supabase дає "Invalid key")
+      const ext = (file.name.split('.').pop() || 'mp4').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'mp4';
+      const fileName = `onboarding/${activeBot.id}_${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from('diagnostic-files').upload(fileName, file);
       if (error) throw error;
       const { data: urlData } = supabase.storage.from('diagnostic-files').getPublicUrl(fileName);
@@ -2232,16 +2310,31 @@ const Settings = ({ bots, activeBot, expertId, onBotAdded, onBotDeleted, onBotUp
               {/* Відео */}
               <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800">
                 <label className="text-sm text-zinc-400 mb-3 block">🎥 Вітальне відео (надсилається після привітання)</label>
-                {onbVideoUrl && (
+                {onbVideoUrl && onbVideoUrl.startsWith('http') && (
                   <div className="mb-3">
                     <video src={onbVideoUrl} controls className="w-full max-w-sm rounded-xl bg-black" />
                     <button onClick={() => setOnbVideoUrl('')} className="mt-2 text-xs text-red-400 hover:text-red-300">Видалити відео</button>
                   </div>
                 )}
+                {onbVideoUrl && !onbVideoUrl.startsWith('http') && (
+                  <div className="mb-3 flex items-center gap-2 bg-black/50 rounded-lg p-3">
+                    <span className="text-emerald-400">✅ file_id встановлено</span>
+                    <button onClick={() => setOnbVideoUrl('')} className="text-xs text-red-400 hover:text-red-300 ml-auto">Прибрати</button>
+                  </div>
+                )}
+
+                {/* Спосіб 1: завантаження (тільки до 50 МБ) */}
                 <input type="file" ref={onbVideoRef} onChange={handleUploadOnbVideo} accept="video/*" className="hidden" />
                 <button onClick={() => onbVideoRef.current?.click()} disabled={onbUploadingVideo} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 rounded-xl text-sm transition">
-                  {onbUploadingVideo ? '⏳ Завантаження...' : onbVideoUrl ? '🔄 Замінити відео' : '📎 Завантажити відео'}
+                  {onbUploadingVideo ? '⏳ Завантаження...' : '📎 Завантажити відео (до 50 МБ)'}
                 </button>
+
+                {/* Спосіб 2: file_id для великих відео */}
+                <div className="mt-4 pt-4 border-t border-zinc-800">
+                  <label className="text-sm text-zinc-400 mb-2 block">🆔 file_id відео (для великих файлів, 50 МБ+)</label>
+                  <input type="text" value={onbVideoUrl && !onbVideoUrl.startsWith('http') ? onbVideoUrl : ''} onChange={(e) => setOnbVideoUrl(e.target.value.trim())} placeholder="Вставте file_id сюди..." className="w-full px-3 py-2 bg-black border border-zinc-800 rounded-lg text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-sm font-mono" />
+                  <p className="text-xs text-zinc-600 mt-2">Як отримати: надішліть відео своєму боту <span className="text-zinc-400">@{activeBot.bot_username}</span> з підписом <code className="bg-zinc-800 px-1 rounded">/videoid</code> — бот відповість id. Скопіюйте його сюди.</p>
+                </div>
               </div>
 
               {/* Питання */}
@@ -2621,27 +2714,52 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     loadAuthorizedUsers();
   };
 
-  const handleSendBroadcast = async (message, clientIds) => {
+  const handleSendBroadcast = async (payload, clientIds) => {
     let count = 0;
     const broadcastId = crypto.randomUUID();
-    
+
+    // Сумісність: якщо передали просто рядок — це текстова розсилка
+    const data = typeof payload === 'string' ? { type: 'text', text: payload } : payload;
+    const isTemplate = data.type === 'template' && data.template;
+    const tpl = data.template;
+
+    // Формуємо рядок повідомлення один раз
+    const buildRow = (clientId) => {
+      const row = { client_id: clientId, direction: 'expert', is_read: false };
+      if (isTemplate) {
+        if (tpl.type === 'text') {
+          row.content_type = 'text';
+          row.text_content = tpl.content || tpl.title;
+        } else {
+          row.content_type = tpl.type; // voice | video_note | photo | video
+          row.file_url = tpl.file_url;
+          row.file_name = tpl.title || null;
+          // Голосові та кружки Telegram надсилає без підпису
+          row.text_content = (tpl.type === 'voice' || tpl.type === 'video_note') ? null : (data.text || null);
+        }
+      } else {
+        row.content_type = 'text';
+        row.text_content = data.text;
+      }
+      return row;
+    };
+
     for (const clientId of clientIds) {
-      await supabase.from('messages').insert({ 
-        client_id: clientId, 
-        direction: 'expert', 
-        content_type: 'text', 
-        text_content: message, 
-        is_read: false 
-      });
+      await supabase.from('messages').insert(buildRow(clientId));
       count++;
     }
-    
+
+    // Текст для історії розсилок
+    const historyText = isTemplate
+      ? `${tpl.type === 'voice' ? '🎤' : tpl.type === 'video_note' ? '⭕' : tpl.type === 'photo' ? '📷' : tpl.type === 'video' ? '🎬' : '📝'} Шаблон: ${tpl.title}${data.text ? ' — ' + data.text : ''}`
+      : data.text;
+
     // Зберігаємо історію розсилки
     await supabase.from('broadcasts').insert({
       id: broadcastId,
       bot_id: activeBot?.id,
       expert_id: expertId,
-      message_text: message,
+      message_text: historyText,
       recipients_count: count,
       client_ids: clientIds,
       status_filter: null
@@ -2757,7 +2875,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
             </div>
           </>
         )}
-        {activeTab === 'broadcast' && <Broadcast clients={clients} onSendBroadcast={handleSendBroadcast} broadcasts={broadcasts} onDeleteBroadcast={async (id) => { await supabase.from('broadcasts').delete().eq('id', id); loadBroadcasts(); }} onClearBroadcasts={async () => { if (!confirm('Очистити всю історію розсилок?')) return; await supabase.from('broadcasts').delete().eq('bot_id', activeBot?.id); loadBroadcasts(); }} />}
+        {activeTab === 'broadcast' && <Broadcast clients={clients} templates={templates} onSendBroadcast={handleSendBroadcast} broadcasts={broadcasts} onDeleteBroadcast={async (id) => { await supabase.from('broadcasts').delete().eq('id', id); loadBroadcasts(); }} onClearBroadcasts={async () => { if (!confirm('Очистити всю історію розсилок?')) return; await supabase.from('broadcasts').delete().eq('bot_id', activeBot?.id); loadBroadcasts(); }} />}
         {activeTab === 'analytics' && <Analytics clients={clients} bots={bots} unreadDialogs={unreadDialogs} onPeriodChange={setAnalyticsPeriod} period={analyticsPeriod} />}
         {activeTab === 'settings' && <Settings bots={bots} activeBot={activeBot} expertId={expertId} onBotAdded={handleBotAdded} onBotDeleted={handleBotDeleted} onBotUpdated={handleBotUpdated} authorizedUsers={authorizedUsers} onAddUser={handleAddAuthorizedUser} onRemoveUser={handleRemoveAuthorizedUser} />}
         {activeTab === 'reminders' && <Reminders reminders={reminders} onComplete={handleCompleteReminder} onGoToChat={handleGoToChat} />}
