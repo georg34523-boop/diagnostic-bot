@@ -2483,28 +2483,48 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     return () => { supabase.removeChannel(clientsSub); supabase.removeChannel(msgSub); };
   }, [activeBot?.id]);
 
+  // Тягне ВСІ рядки посторінково (обходить ліміт Supabase у 1000 рядків)
+  const fetchAllPages = async (buildQuery) => {
+    const PAGE = 1000;
+    let all = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await buildQuery(from, from + PAGE - 1);
+      if (error) { console.error('fetchAllPages:', error); break; }
+      all = all.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
+  };
+
   const loadClients = async () => {
     if (!activeBot) return;
-    const { data } = await supabase.from('clients').select('*').eq('bot_id', activeBot.id).order('updated_at', { ascending: false });
-    if (data) {
-      setClients(data);
-      // Оновлюємо selectedClient якщо він є в списку
-      setSelectedClient(prev => {
-        if (!prev) return prev;
-        const updated = data.find(c => c.id === prev.id);
-        return updated || prev;
-      });
-      const unread = {};
-      const last = {};
-      for (const c of data) {
-        const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('client_id', c.id).eq('direction', 'client').eq('is_read', false);
-        unread[c.id] = count || 0;
-        const { data: lastMsg } = await supabase.from('messages').select('*').eq('client_id', c.id).order('created_at', { ascending: false }).limit(1);
-        if (lastMsg?.[0]) last[c.id] = lastMsg[0];
+    // Всі клієнти (сортуємо по id для стабільної пагінації; порядок у списку робить ClientList)
+    const data = await fetchAllPages((f, t) =>
+      supabase.from('clients').select('*').eq('bot_id', activeBot.id).order('id', { ascending: true }).range(f, t)
+    );
+    setClients(data);
+    // Оновлюємо selectedClient якщо він є в списку
+    setSelectedClient(prev => {
+      if (!prev) return prev;
+      const updated = data.find(c => c.id === prev.id);
+      return updated || prev;
+    });
+    // Превью + непрочитані одним RPC (посторінково), замість 2 запитів на кожного клієнта
+    const previews = await fetchAllPages((f, t) =>
+      supabase.rpc('client_previews', { p_bot_id: activeBot.id }).order('id', { ascending: true }).range(f, t)
+    );
+    const unread = {};
+    const last = {};
+    for (const p of previews) {
+      unread[p.id] = Number(p.unread_count) || 0;
+      if (p.last_created_at) {
+        last[p.id] = { created_at: p.last_created_at, content_type: p.last_content_type, text_content: p.last_text_content };
       }
-      setUnreadCounts(unread);
-      setLastMessages(last);
     }
+    setUnreadCounts(unread);
+    setLastMessages(last);
   };
 
   const loadTemplates = async () => {
