@@ -469,6 +469,19 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                 await authorize_user(telegram_id, bot_id, expert_id, username, email, phone)
                 client = await get_or_create_client(message.from_user, bot_id, expert_id, email, phone)
 
+                # Зберігаємо суму оплати в картку клієнта (видно лише експерту в CRM)
+                try:
+                    paid_amount = result["data"].get("amount")
+                    paid_order_id = result["data"].get("order_id")
+                    if paid_amount is not None:
+                        supabase.table("clients").update({
+                            "paid_amount": paid_amount,
+                            "paid_order_id": paid_order_id
+                        }).eq("id", client["id"]).execute()
+                        client["paid_amount"] = paid_amount
+                except Exception as e:
+                    logger.warning(f"Failed to save paid_amount: {e}")
+
                 # Запускаємо воронку-опитувальник; якщо вимкнена — звичайне привітання
                 if not await start_onboarding(message, client):
                     current_welcome = await get_welcome_message()
