@@ -111,7 +111,9 @@ const LoginPage = ({ onLogin }) => {
 const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, lastMessages, onClose }) => {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const filtered = clients.filter(c => filter === 'all' || c.status === filter).filter(c => !search || c.first_name?.toLowerCase().includes(search.toLowerCase()) || c.last_name?.toLowerCase().includes(search.toLowerCase()) || c.telegram_username?.toLowerCase().includes(search.toLowerCase())).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  // Час останньої активності: спершу час останнього повідомлення, потім updated_at, потім created_at
+  const lastActivity = (c) => new Date(lastMessages?.[c.id]?.created_at || c.updated_at || c.created_at).getTime() || 0;
+  const filtered = clients.filter(c => filter === 'all' || c.status === filter).filter(c => !search || c.first_name?.toLowerCase().includes(search.toLowerCase()) || c.last_name?.toLowerCase().includes(search.toLowerCase()) || c.telegram_username?.toLowerCase().includes(search.toLowerCase())).sort((a, b) => lastActivity(b) - lastActivity(a));
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
@@ -136,7 +138,7 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center text-white font-medium text-lg">{client.first_name?.[0] || '?'}</div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between"><span className="font-medium text-white truncate">{client.first_name} {client.last_name}</span><span className="text-xs text-zinc-500">{formatDate(client.updated_at)}</span></div>
+                  <div className="flex items-center justify-between"><span className="font-medium text-white truncate">{client.first_name} {client.last_name}</span><span className="text-xs text-zinc-500">{formatDate(lastMsg?.created_at || client.updated_at)}</span></div>
                   <div className="flex items-center justify-between mt-1"><span className="text-sm text-zinc-500 truncate">{preview || 'Немає повідомлень'}</span>{unread > 0 && <span className="bg-emerald-500 text-black text-xs font-bold px-2 py-0.5 rounded-full ml-2">{unread}</span>}</div>
                 </div>
               </div>
