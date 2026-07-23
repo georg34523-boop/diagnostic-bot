@@ -432,7 +432,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
           <div className="flex items-center gap-3 flex-1 min-w-0">
             {isMobile && <button onClick={onBack} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>}
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center text-white font-medium">{client.first_name?.[0] || '?'}</div>
-            <div className="min-w-0 flex-1"><div className="font-medium text-white truncate">{client.first_name} {client.last_name}</div><div className="text-sm text-zinc-500 truncate">@{client.telegram_username}</div></div>
+            <div className="min-w-0 flex-1"><div className="font-medium text-white truncate">{client.first_name} {client.last_name}</div><div className="text-sm text-zinc-500 truncate">@{client.telegram_username}{client.paid_amount != null && <span className="text-emerald-400"> · 💳 {client.paid_amount} грн</span>}</div></div>
           </div>
           <select value={client.status} onChange={(e) => onStatusChange(e.target.value)} className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-sm focus:outline-none focus:border-emerald-500">{Object.entries(STATUSES).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}</select>
           {/* AI Toggle */}
@@ -778,7 +778,7 @@ const ChatWindow = ({ client, messages, onSendMessage, onSendFile, onStatusChang
         <div className={`${isMobile ? 'absolute inset-y-0 right-0 z-20 w-80 shadow-2xl' : 'w-72 hidden md:flex'} bg-zinc-950 border-l border-zinc-800 flex flex-col`}>
           {isMobile && <div className="p-4 border-b border-zinc-800 flex justify-between items-center"><span className="font-medium text-white">Інформація</span><button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-zinc-800 rounded text-zinc-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>}
           <div className="flex-1 overflow-y-auto p-4 space-y-5">
-            <div><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Контакт</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-zinc-500">Telegram</span><span className="text-white">@{client.telegram_username || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Телефон</span><span className="text-white">{client.phone || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Email</span><span className="text-white">{client.email || '—'}</span></div></div></div>
+            <div><h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Контакт</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-zinc-500">Telegram</span><span className="text-white">@{client.telegram_username || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Телефон</span><span className="text-white">{client.phone || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">Email</span><span className="text-white">{client.email || '—'}</span></div><div className="flex justify-between"><span className="text-zinc-500">💳 Оплата</span><span className="font-semibold text-emerald-400">{client.paid_amount != null ? `${client.paid_amount} грн` : '—'}</span></div></div></div>
             
             {/* Передати в продажі */}
             <div>
@@ -1694,6 +1694,14 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const toggleStatus = (s) => setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
 
   const canSend = filtered.length > 0 && (mode === 'text' ? !!message.trim() : !!selectedTemplate);
+
+  // Попередження при спробі закрити/оновити сторінку під час розсилки
+  useEffect(() => {
+    if (!sending) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; return ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [sending]);
 
   const handleSend = async () => {
     if (!canSend) return;
@@ -2744,9 +2752,14 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
       return row;
     };
 
-    for (const clientId of clientIds) {
-      await supabase.from('messages').insert(buildRow(clientId));
-      count++;
+    // Вставляємо пачками (а не по одному) — швидше і не обірветься при оновленні сторінки
+    const rows = clientIds.map(buildRow);
+    const CHUNK = 200;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const batch = rows.slice(i, i + CHUNK);
+      const { error } = await supabase.from('messages').insert(batch);
+      if (error) throw error;
+      count += batch.length;
     }
 
     // Текст для історії розсилок
