@@ -332,6 +332,20 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             logger.error("Не вдалося завантажити файл із Telegram: %s", e)
             return None
 
+    GIFT_COURSE_URL = "https://t.me/zalomy_snu_bot?start=69ca5b0b816011f88c0ff77b"
+
+    async def send_welcome(message: Message):
+        """Привітання разом із кнопкою на подарунковий курс «Заломи сну».
+
+        Окремий помічник, бо привітання надсилається з чотирьох місць
+        (воронка, повторний /start, вимкнена воронка) — інакше кнопку
+        довелося б дублювати, і десь вона неминуче загубилась би.
+        """
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🎁 Забрати курс «Заломи сну»", url=GIFT_COURSE_URL)
+        ]])
+        await message.answer(await get_welcome_message(), reply_markup=kb)
+
     async def send_onboarding_video(chat_id: int, video_ref: str):
         """Надіслати вітальне відео.
 
@@ -392,9 +406,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         if not questions:
             return False
 
-        # 1. Привітання
-        welcome = await get_welcome_message()
-        await message.answer(welcome)
+        # 1. Привітання з кнопкою подарунка
+        await send_welcome(message)
 
         # 2. Відео (якщо налаштоване)
         video_url = config.get("onboarding_video_url")
@@ -546,8 +559,7 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
 
                 # Запускаємо воронку-опитувальник; якщо вимкнена — звичайне привітання
                 if not await start_onboarding(message, client):
-                    current_welcome = await get_welcome_message()
-                    await message.answer(current_welcome)
+                    await send_welcome(message)
                 return
             # Сюди доходимо, якщо код не спрацював або це повторний клік.
             # Відмовляти можна ЛИШЕ тим, у кого доступу справді немає:
@@ -569,11 +581,9 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         # Повторний /start: якщо воронку ще не пройдено — запускаємо, інакше просто привітання
         if client.get("onboarding_done"):
-            current_welcome = await get_welcome_message()
-            await message.answer(current_welcome)
+            await send_welcome(message)
         elif not await start_onboarding(message, client):
-            current_welcome = await get_welcome_message()
-            await message.answer(current_welcome)
+            await send_welcome(message)
 
     @dp.message(Command("help"))
     async def cmd_help(message: Message):
