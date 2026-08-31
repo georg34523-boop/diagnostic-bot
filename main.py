@@ -113,7 +113,8 @@ async def register_webhook(bot: Bot, bot_token: str):
         return False
 
 
-TELEGRAM_UPLOAD_LIMIT = 50 * 1024 * 1024   # Bot API не приймає завантаження більші за 50 МБ
+TELEGRAM_UPLOAD_LIMIT = 50 * 1024 * 1024     # Bot API не приймає завантаження більші за 50 МБ
+TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024   # і не віддає боту файли більші за 20 МБ
 
 
 async def verify_payment_token(token: str, telegram_id: int, bot_id: str) -> dict:
@@ -309,6 +310,27 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
         # Зберігаємо як повідомлення експерта (is_read=True → поллер не надсилатиме повторно)
         await save_message(client_id=client_id, direction="expert", content_type="text",
                            text_content=text, telegram_message_id=sent.message_id if sent else None)
+
+    async def fetch_to_storage(file_id: str, file_size: int, file_name: str):
+        """Завантажити файл з Telegram у сховище.
+
+        Повертає URL або None. Боти не можуть качати файли більші за 20 МБ —
+        get_file відповідає «file is too big». Раніше цей виняток піднімався
+        до вебхука, той віддавав 500, і Telegram довбав один апдейт по колу.
+        Тепер просто пропускаємо тіло файлу: telegram_file_id зберігається,
+        тож переслати або переглянути файл у Telegram усе одно можна.
+        """
+        if file_size and file_size > TELEGRAM_DOWNLOAD_LIMIT:
+            logger.warning("Файл завеликий для завантаження ботом: %.1f МБ (ліміт 20 МБ)",
+                           file_size / 1048576)
+            return None
+        try:
+            f = await bot.get_file(file_id)
+            data = await bot.download_file(f.file_path)
+            return await upload_file_to_storage(data.read(), file_name)
+        except Exception as e:
+            logger.error("Не вдалося завантажити файл із Telegram: %s", e)
+            return None
 
     async def send_onboarding_video(chat_id: int, video_ref: str):
         """Надіслати вітальне відео.
@@ -566,10 +588,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        file_url = await fetch_to_storage(photo.file_id, photo.file_size, file_name)
         await save_message(client_id=client["id"], direction="client", content_type="photo", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=photo.file_id, telegram_message_id=message.message_id)
         # Воронка: фото на фінальному кроці завершує анкету (перше фото), решту просто зберігаємо
         if (client.get("onboarding_step") or 0) > 0 and not client.get("onboarding_done"):
@@ -597,10 +617,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         video = message.video
-        file = await bot.get_file(video.file_id)
-        file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        file_url = await fetch_to_storage(video.file_id, video.file_size, file_name)
         await save_message(client_id=client["id"], direction="client", content_type="video", text_content=message.caption, file_url=file_url, file_name=file_name, telegram_file_id=video.file_id, telegram_message_id=message.message_id)
 
     @dp.message(F.voice)
@@ -673,10 +691,8 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             return
         client = await get_or_create_client(message.from_user, bot_id, expert_id)
         document = message.document
-        file = await bot.get_file(document.file_id)
-        file_bytes = await bot.download_file(file.file_path)
         file_name = f"{message.from_user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{document.file_name}"
-        file_url = await upload_file_to_storage(file_bytes.read(), file_name)
+        file_url = await fetch_to_storage(document.file_id, document.file_size, file_name)
         await save_message(client_id=client["id"], direction="client", content_type="document", text_content=message.caption, file_url=file_url, file_name=document.file_name, telegram_file_id=document.file_id, telegram_message_id=message.message_id)
 
     async def get_reply_id(message: Message) -> str:
@@ -1330,10 +1346,13 @@ async def telegram_webhook(bot_token: str, request: Request):
         update_data = await request.json()
         update = types.Update(**update_data)
         await dp.feed_update(bot, update)
-        return {"ok": True}
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # НІКОЛИ не віддаємо 500. Telegram вважає це збоєм доставки і повторює
+        # той самий апдейт нескінченно, а через гарантію порядку в межах чату
+        # за ним застрягають УСІ наступні повідомлення цієї людини.
+        # Саме так один завеликий файл заблокував переписку на півгодини.
+        logger.error(f"Webhook error (апдейт пропущено, щоб не блокувати чат): {e}")
+    return {"ok": True}
 
 
 @app.post("/api/register-bot")
