@@ -113,6 +113,9 @@ async def register_webhook(bot: Bot, bot_token: str):
         return False
 
 
+TELEGRAM_UPLOAD_LIMIT = 50 * 1024 * 1024   # Bot API не приймає завантаження більші за 50 МБ
+
+
 async def verify_payment_token(token: str, telegram_id: int, bot_id: str) -> dict:
     """Перевірка і активація токена оплати"""
     result = supabase.table("payment_tokens").select("*").eq("token", token).execute()
@@ -308,25 +311,55 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                            text_content=text, telegram_message_id=sent.message_id if sent else None)
 
     async def send_onboarding_video(chat_id: int, video_ref: str):
-        """Надіслати вітальне відео. Приймає або URL (мале відео до 50МБ), або Telegram file_id (велике, без обмеження)."""
+        """Надіслати вітальне відео.
+
+        Приймає Telegram file_id (бажано) або URL.
+        file_id кращий з двох причин: немає ліміту розміру і файл не качається
+        заново для кожного клієнта — Telegram віддає його зі своїх серверів.
+        Щоб отримати file_id: надішліть боту відео з підписом /videoid.
+        """
+        ref = (video_ref or "").strip()
+        if not ref:
+            return
+
         try:
-            ref = (video_ref or "").strip()
-            if not ref:
+            if not (ref.startswith("http://") or ref.startswith("https://")):
+                await bot.send_video(chat_id, ref)      # file_id
                 return
-            if ref.startswith("http://") or ref.startswith("https://"):
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(ref) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            video_file = BufferedInputFile(data, filename="welcome.mp4")
-                            await bot.send_video(chat_id, video_file)
-                            return
-                await bot.send_video(chat_id, ref)
-            else:
-                # Telegram file_id — миттєво, без обмеження розміру
-                await bot.send_video(chat_id, ref)
+
+            async with aiohttp.ClientSession() as session:
+                # Спочатку розмір. Качати сотні мегабайтів у пам'ять, щоб
+                # Telegram їх усе одно відхилив, немає сенсу — а саме це
+                # і відбувалось: відео на 367 МБ мовчки не доходило.
+                size = 0
+                try:
+                    async with session.head(ref, allow_redirects=True) as head:
+                        size = int(head.headers.get("Content-Length") or 0)
+                except Exception:
+                    pass
+
+                if size > TELEGRAM_UPLOAD_LIMIT:
+                    logger.error(
+                        "Вітальне відео %.0f МБ — більше ліміту Telegram у 50 МБ. "
+                        "Воронка піде без відео. Рішення: надішліть боту це відео "
+                        "з підписом /videoid і збережіть отриманий file_id у CRM "
+                        "замість посилання.", size / 1048576)
+                    return
+
+                async with session.get(ref) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        await bot.send_video(
+                            chat_id, BufferedInputFile(data, filename="welcome.mp4"))
+                        return
+                    logger.error("Вітальне відео: %s повернув статус %s", ref, resp.status)
+
+            # Не змогли завантажити самі — хай спробує Telegram за посиланням
+            await bot.send_video(chat_id, ref)
+
         except Exception as e:
-            logger.warning(f"Onboarding video send failed: {e}")
+            # Раніше тут був warning, і збій губився серед звичайних логів
+            logger.error(f"Не вдалося надіслати вітальне відео: {e}")
 
     async def start_onboarding(message: Message, client: dict) -> bool:
         """Запустити воронку: привітання → відео → перше питання. True якщо запущено."""
@@ -621,6 +654,20 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
     async def handle_document(message: Message):
         telegram_id = message.from_user.id
         username = message.from_user.username
+        # Те саме, що й для відео: великі файли Telegram часто надсилає
+        # документом, а не відео. Без цієї гілки /videoid у такому разі
+        # мовчки не спрацьовував би, а нижче файл ще й пішов би на
+        # завантаження — а боти не можуть качати більше 20 МБ.
+        if (message.caption or "").strip().lower() in ("/videoid", "/id", "videoid"):
+            await message.answer(
+                f"file_id вашого файлу:\n<code>{message.document.file_id}</code>\n\n"
+                f"Скопіюйте його в CRM → Налаштування → 🎬 Воронка → поле «file_id відео».\n\n"
+                f"⚠️ Файл надіслано документом, а не відео. У воронці він так і "
+                f"показуватиметься — файлом без прев'ю. Щоб було відео, надішліть "
+                f"його ще раз саме як відео.",
+                parse_mode="HTML"
+            )
+            return
         if not await is_authorized(username, telegram_id, bot_id):
             await message.answer("⛔ У вас немає доступу.")
             return
