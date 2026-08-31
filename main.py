@@ -123,6 +123,10 @@ async def verify_payment_token(token: str, telegram_id: int, bot_id: str) -> dic
     token_data = result.data[0]
     
     if token_data["status"] == "used":
+        # Якщо код погасив САМЕ ЦЕЙ користувач — це не помилка, а повторний
+        # клік по тому самому посиланню. Доступ у нього вже є, просто пускаємо.
+        if token_data.get("used_by_telegram_id") == telegram_id:
+            return {"success": True, "data": token_data, "already": True}
         return {"success": False, "error": "Цей код вже був використаний"}
     
     if token_data["status"] == "expired":
@@ -463,7 +467,10 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
             token = command.args
             result = await verify_payment_token(token, telegram_id, bot_id)
             
-            if result["success"]:
+            # already=True — повторний клік, доступ уже виданий раніше.
+            # Такого не проводимо через сценарій нової оплати, бо
+            # start_onboarding скидає onboarding_done і анкета почалась би заново.
+            if result["success"] and not result.get("already"):
                 email = result["data"].get("email")
                 phone = result["data"].get("phone")
                 await authorize_user(telegram_id, bot_id, expert_id, username, email, phone)
@@ -487,9 +494,14 @@ def create_bot_handlers(bot: Bot, dp: Dispatcher, bot_token: str, bot_id: str, e
                     current_welcome = await get_welcome_message()
                     await message.answer(current_welcome)
                 return
-            else:
+            # Сюди доходимо, якщо код не спрацював або це повторний клік.
+            # Відмовляти можна ЛИШЕ тим, у кого доступу справді немає:
+            # раніше оплачений клієнт із погашеним кодом бачив «немає доступу»
+            # і думав, що втратив те, за що заплатив.
+            if not result["success"] and not await is_authorized(username, telegram_id, bot_id):
                 await message.answer(f"❌ {result['error']}\n\nЯкщо виникли проблеми, напишіть в підтримку.")
                 return
+            # інакше — далі звичайним сценарієм авторизованого користувача
 
         if not await is_authorized(username, telegram_id, bot_id):
             await message.answer(
