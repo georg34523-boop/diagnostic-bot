@@ -881,25 +881,38 @@ async def send_expert_messages():
     
     while True:
         try:
-            # scheduled_at — час, раніше якого надсилати не можна.
-            # NULL у звичайних відповідей експерта (йдуть одразу),
-            # заповнений у розсилок із затримкою. Затримка живе в базі,
-            # а не в браузері, тож вкладку можна закрити.
-            now_iso = datetime.now(timezone.utc).isoformat()
+            # Беремо найстаріші неnadіслані повідомлення експерта.
+            # Фільтр за часом НЕ можна робити запитом: у supabase 2.0.0
+            # у построювача немає .or_(), і виклик валив увесь цикл —
+            # жодне повідомлення не йшло. Тому відсіюємо вже в Python.
             result = (supabase.table("messages")
                       .select("*, clients(telegram_id, expert_id)")
                       .eq("direction", "expert").eq("is_read", False)
-                      .or_(f"scheduled_at.is.null,scheduled_at.lte.{now_iso}")
                       .order("created_at")
                       .limit(500)
                       .execute())
-            
-            if not result.data:
+
+            # scheduled_at — час, раніше якого надсилати не можна.
+            # Порожній у звичайних відповідей (йдуть одразу),
+            # заповнений у розсилок із затримкою.
+            now_utc = datetime.now(timezone.utc)
+            pending = []
+            for m in (result.data or []):
+                sched = m.get("scheduled_at")
+                if sched:
+                    try:
+                        if datetime.fromisoformat(sched.replace("Z", "+00:00")) > now_utc:
+                            continue          # ще рано
+                    except Exception:
+                        pass                  # незрозуміла дата — краще надіслати
+                pending.append(m)
+
+            if not pending:
                 empty_polls += 1
             else:
                 empty_polls = 0
-            
-            for msg in result.data:
+
+            for msg in pending:
                 if msg["id"] in processed_ids:
                     continue
                 
