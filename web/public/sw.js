@@ -34,6 +34,11 @@ self.addEventListener('activate', (event) => {
 
 // Fetch - network first, fallback to cache
 self.addEventListener('fetch', (event) => {
+  // Кеш браузера вміє лише GET. Раніше воркер намагався покласти в кеш
+  // будь-яку відповідь — і кожен POST у Supabase породжував приховану
+  // помилку, яка засмічувала консоль і заважала шукати справжні збої.
+  if (event.request.method !== 'GET') return;
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {

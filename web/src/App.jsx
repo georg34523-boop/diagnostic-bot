@@ -1760,7 +1760,13 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
       setCaption('');
       setSelectedTemplate(null);
     } catch (err) {
-      setResult({ success: false });
+      // Показуємо саме те, що сказала база. Безлике «Помилка» нічого
+      // не пояснює ані вам, ані тому, хто потім розбиратиметься.
+      console.error('Розсилка не пішла:', err);
+      setResult({
+        success: false,
+        detail: err?.message || err?.details || err?.hint || String(err),
+      });
     }
     setSending(false);
   };
@@ -1777,7 +1783,7 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   return (
     <div className="flex-1 overflow-y-auto bg-black p-6">
       <h2 className="text-2xl font-bold text-white mb-6">Розсилка</h2>
-      {result && <div className={`rounded-xl p-4 mb-6 ${result.success ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>{result.success ? `✓ Надіслано ${result.count} клієнтам` : 'Помилка'}<button onClick={() => setResult(null)} className="ml-4">×</button></div>}
+      {result && <div className={`rounded-xl p-4 mb-6 ${result.success ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>{result.success ? `✓ Надіслано ${result.count} клієнтам` : `Помилка: ${result.detail || 'без пояснення'}`}<button onClick={() => setResult(null)} className="ml-4">×</button></div>}
       
       <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
         <h3 className="text-white font-medium mb-4">Отримувачі</h3>
