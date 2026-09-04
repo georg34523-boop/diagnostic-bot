@@ -10,6 +10,7 @@ from typing import Dict
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command, CommandObject
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from supabase import create_client, Client
 from fastapi import FastAPI, Request, HTTPException
@@ -111,6 +112,28 @@ async def register_webhook(bot: Bot, bot_token: str):
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
         return False
+
+
+# Кеш file_id за URL файлу. Заповнюється після першої вдалої відправки.
+# Для розсилки це різниця між 1444 завантаженнями з Supabase + 1444 запусками
+# ffmpeg — і одним. Далі Telegram віддає файл зі своїх серверів миттєво.
+MEDIA_FILE_IDS = {}
+
+# Пауза між відправками. Telegram глушить бота приблизно на 30 повідомленнях
+# за секунду; 0.05 с дає ~20/сек — з запасом. 1444 людини ≈ 75 секунд.
+BROADCAST_PAUSE = 0.05
+
+
+def remember_file_id(url, sent_message):
+    """Запам'ятати file_id щойно відправленого медіа."""
+    if not url or not sent_message:
+        return
+    for attr in ('voice', 'video_note', 'photo', 'video', 'document', 'audio'):
+        obj = getattr(sent_message, attr, None)
+        if obj:
+            item = obj[-1] if isinstance(obj, list) else obj
+            MEDIA_FILE_IDS[url] = item.file_id
+            return
 
 
 TELEGRAM_UPLOAD_LIMIT = 50 * 1024 * 1024     # Bot API не приймає завантаження більші за 50 МБ
@@ -835,6 +858,10 @@ async def initialize_all_bots():
 async def send_expert_messages():
     """Відправка повідомлень від експертів клієнтам"""
     processed_ids = set()
+    # Скільки разів повідомлення падало з тимчасовою помилкою.
+    # Без ліміту одне «бите» повідомлення крутилося б у циклі вічно.
+    send_failures = {}
+    MAX_SEND_ATTEMPTS = 3
     empty_polls = 0  # Лічильник пустих опитувань для адаптивного інтервалу
     
     # При старті позначаємо всі старі непрочитані як прочитані (щоб не відправляти повторно при рестарті)
@@ -886,7 +913,21 @@ async def send_expert_messages():
                         if reply_msg.data and reply_msg.data[0].get("telegram_message_id"):
                             tg_reply_to = reply_msg.data[0]["telegram_message_id"]
                     
-                    if msg["content_type"] == "text" and msg.get("text_content"):
+                    file_url = msg.get("file_url")
+                    ctype = msg["content_type"]
+                    cached = MEDIA_FILE_IDS.get(file_url) if file_url else None
+
+                    if cached and ctype == "voice":
+                        sent_message = await bot.send_voice(telegram_id, cached)
+                    elif cached and ctype == "video_note":
+                        sent_message = await bot.send_video_note(telegram_id, cached)
+                    elif cached and ctype == "photo":
+                        sent_message = await bot.send_photo(telegram_id, cached, caption=msg.get("text_content"))
+                    elif cached and ctype == "video":
+                        sent_message = await bot.send_video(telegram_id, cached, caption=msg.get("text_content"))
+                    elif cached and ctype == "document":
+                        sent_message = await bot.send_document(telegram_id, cached, caption=msg.get("text_content"))
+                    elif msg["content_type"] == "text" and msg.get("text_content"):
                         sent_message = await bot.send_message(telegram_id, msg["text_content"], reply_to_message_id=tg_reply_to)
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
@@ -1074,6 +1115,9 @@ async def send_expert_messages():
                                     
                                     sent_message = await bot.send_video_note(telegram_id, video_file)
                     
+                    if not cached:
+                        remember_file_id(file_url, sent_message)
+
                     # Зберігаємо telegram_message_id
                     update_data = {"is_read": True}
                     if sent_message:
@@ -1081,9 +1125,30 @@ async def send_expert_messages():
                     supabase.table("messages").update(update_data).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
                     logger.info(f"Sent message {msg['id']} to {telegram_id}")
-                except Exception as e:
-                    logger.error(f"Error sending message {msg['id']}: {e}")
+
+                    # Тримаємо темп, щоб Telegram не почав відбивати 429
+                    await asyncio.sleep(BROADCAST_PAUSE)
+
+                except TelegramRetryAfter as e:
+                    # Ліміт. НЕ позначаємо оброблений — повідомлення піде
+                    # наступним колом. Раніше воно тут втрачалося назавжди.
+                    logger.warning("Telegram просить зачекати %s с — пауза", e.retry_after)
+                    await asyncio.sleep(e.retry_after + 1)
+                except (TelegramForbiddenError, TelegramBadRequest) as e:
+                    # Бота заблокували або чат видалено — повторювати марно.
+                    logger.info(f"Пропускаю {telegram_id}: {e}")
+                    supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
+                except Exception as e:
+                    # Тимчасовий збій — лишаємо непрочитаним і пробуємо ще,
+                    # але не нескінченно: після трьох спроб здаємось.
+                    n = send_failures.get(msg["id"], 0) + 1
+                    send_failures[msg["id"]] = n
+                    logger.error(f"Error sending message {msg['id']} (спроба {n}): {e}")
+                    if n >= MAX_SEND_ATTEMPTS:
+                        logger.error(f"Здаюсь із повідомленням {msg['id']} після {n} спроб")
+                        supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
+                        processed_ids.add(msg["id"])
         except Exception as e:
             logger.error(f"Error in send_expert_messages: {e}")
         
