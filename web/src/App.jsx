@@ -2911,7 +2911,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     // не порахувати. Посилання своє в кожного, щоб бачити саме людей.
     const linkUrl = data.linkUrl || null;
     const linkText = data.linkText || 'Приєднатися';
-    const btnFor = (clientId) => linkUrl ? `${API_URL}/r/${broadcastId}/${clientId}` : null;
+    const btnFor = (clientId) => linkUrl ? `${RAILWAY_API_URL}/r/${broadcastId}/${clientId}` : null;
 
     // Рядок історії створюємо ПЕРШИМ: редирект шукає посилання саме в ньому,
     // і якщо хтось натисне кнопку раніше, ніж він з'явиться, перехід
