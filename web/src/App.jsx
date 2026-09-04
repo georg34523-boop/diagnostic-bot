@@ -1688,6 +1688,7 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [caption, setCaption] = useState('');
   const [tplFilter, setTplFilter] = useState('all');
+  const [delayMin, setDelayMin] = useState(0);   // через скільки хвилин надіслати
 
   const tplIcon = (t) => t === 'voice' ? '🎤' : t === 'video_note' ? '⭕' : t === 'photo' ? '📷' : t === 'video' ? '🎬' : '📝';
   const visibleTemplates = templates.filter(t => tplFilter === 'all' || t.type === tplFilter);
@@ -1708,12 +1709,13 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const handleSend = async () => {
     if (!canSend) return;
     const what = mode === 'text' ? 'повідомлення' : `шаблон «${selectedTemplate.title}»`;
-    if (!confirm(`Надіслати ${what} ${filtered.length} клієнтам?`)) return;
+    const when = delayMin > 0 ? ` через ${delayMin} хв` : '';
+    if (!confirm(`Надіслати ${what} ${filtered.length} клієнтам${when}?`)) return;
     setSending(true);
     try {
       const payload = mode === 'template'
-        ? { type: 'template', template: selectedTemplate, text: caption }
-        : { type: 'text', text: message };
+        ? { type: 'template', template: selectedTemplate, text: caption, delayMinutes: delayMin }
+        : { type: 'text', text: message, delayMinutes: delayMin };
       const res = await onSendBroadcast(payload, filtered.map(c => c.id));
       setResult({ success: true, count: res.count });
       setMessage('');
@@ -1802,7 +1804,31 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
           </div>
         )}
 
-        <button onClick={handleSend} disabled={sending || !canSend} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : 'Надіслати'}</button>
+        {/* Затримка: щоб поставити другий лист у чергу одразу за першим,
+            не чекаючи біля комп'ютера. Час рахується від натискання кнопки. */}
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-zinc-400 text-sm">Надіслати через</span>
+          <input
+            type="number" min="0" max="1440" value={delayMin}
+            onChange={(e) => setDelayMin(Math.max(0, Math.min(1440, Number(e.target.value) || 0)))}
+            className="w-20 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-center"
+          />
+          <span className="text-zinc-400 text-sm">хв</span>
+          {[0, 2, 5, 15].map(m => (
+            <button key={m} type="button" onClick={() => setDelayMin(m)}
+              className={`px-3 py-1.5 rounded-lg text-sm ${delayMin === m ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}>
+              {m === 0 ? 'одразу' : `${m} хв`}
+            </button>
+          ))}
+        </div>
+        {delayMin > 0 && (
+          <p className="text-zinc-500 text-sm mb-4">
+            Піде о {new Date(Date.now() + delayMin * 60000).toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit' })}.
+            Вкладку можна закрити — черга живе на сервері.
+          </p>
+        )}
+
+        <button onClick={handleSend} disabled={sending || !canSend} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : delayMin > 0 ? `Поставити в чергу (через ${delayMin} хв)` : 'Надіслати'}</button>
       </div>
       
       {/* Статистика */}
@@ -2754,8 +2780,15 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     const tpl = data.template;
 
     // Формуємо рядок повідомлення один раз
+    // Затримка живе в базі (scheduled_at), а не в браузері: поллер бота
+    // сам не візьме рядок раніше часу. Тому вкладку можна закривати.
+    const delayMinutes = Number(data.delayMinutes) || 0;
+    const scheduledAt = delayMinutes > 0
+      ? new Date(Date.now() + delayMinutes * 60000).toISOString()
+      : null;
+
     const buildRow = (clientId) => {
-      const row = { client_id: clientId, direction: 'expert', is_read: false };
+      const row = { client_id: clientId, direction: 'expert', is_read: false, scheduled_at: scheduledAt };
       if (isTemplate) {
         if (tpl.type === 'text') {
           row.content_type = 'text';

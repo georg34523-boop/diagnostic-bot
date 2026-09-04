@@ -3,7 +3,7 @@ import asyncio
 import logging
 import aiohttp
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from typing import Dict
@@ -867,14 +867,32 @@ async def send_expert_messages():
     # При старті позначаємо всі старі непрочитані як прочитані (щоб не відправляти повторно при рестарті)
     try:
         old_cutoff = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
-        supabase.table("messages").update({"is_read": True}).eq("direction", "expert").eq("is_read", False).lt("created_at", old_cutoff).execute()
-        logger.info("Marked old unread expert messages as read (prevent re-send on restart)")
+        # ВАЖЛИВО: чистимо тільки те, у чого немає scheduled_at.
+        # Відкладена розсилка створюється зараз, а йде через десятки хвилин —
+        # без цієї умови будь-який рестарт (у тому числі деплой) тихо стирав би
+        # усю чергу, і люди не отримали б нічого.
+        (supabase.table("messages").update({"is_read": True})
+         .eq("direction", "expert").eq("is_read", False)
+         .is_("scheduled_at", "null")
+         .lt("created_at", old_cutoff).execute())
+        logger.info("Marked old unread expert messages as read (заплановані не чіпав)")
     except Exception as e:
         logger.warning(f"Failed to mark old messages: {e}")
     
     while True:
         try:
-            result = supabase.table("messages").select("*, clients(telegram_id, expert_id)").eq("direction", "expert").eq("is_read", False).execute()
+            # scheduled_at — час, раніше якого надсилати не можна.
+            # NULL у звичайних відповідей експерта (йдуть одразу),
+            # заповнений у розсилок із затримкою. Затримка живе в базі,
+            # а не в браузері, тож вкладку можна закрити.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            result = (supabase.table("messages")
+                      .select("*, clients(telegram_id, expert_id)")
+                      .eq("direction", "expert").eq("is_read", False)
+                      .or_(f"scheduled_at.is.null,scheduled_at.lte.{now_iso}")
+                      .order("created_at")
+                      .limit(500)
+                      .execute())
             
             if not result.data:
                 empty_polls += 1
