@@ -14,6 +14,7 @@ from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, Teleg
 from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from supabase import create_client, Client
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -117,6 +118,8 @@ async def register_webhook(bot: Bot, bot_token: str):
 # Кеш file_id за URL файлу. Заповнюється після першої вдалої відправки.
 # Для розсилки це різниця між 1444 завантаженнями з Supabase + 1444 запусками
 # ffmpeg — і одним. Далі Telegram віддає файл зі своїх серверів миттєво.
+BOT_USERNAME_FALLBACK = "svitlana_gavriluk_bot"
+
 MEDIA_FILE_IDS = {}
 
 # Пауза між відправками. Telegram глушить бота приблизно на 30 повідомленнях
@@ -948,25 +951,34 @@ async def send_expert_messages():
                     ctype = msg["content_type"]
                     cached = MEDIA_FILE_IDS.get(file_url) if file_url else None
 
+                    # Кнопка під повідомленням (розсилка з посиланням).
+                    # button_url веде не одразу на сайт, а на наш редирект —
+                    # інакше Telegram не дає жодної можливості порахувати переходи.
+                    kb = None
+                    if msg.get("button_text") and msg.get("button_url"):
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text=msg["button_text"], url=msg["button_url"])
+                        ]])
+
                     if cached and ctype == "voice":
-                        sent_message = await bot.send_voice(telegram_id, cached)
+                        sent_message = await bot.send_voice(telegram_id, cached, reply_markup=kb)
                     elif cached and ctype == "video_note":
-                        sent_message = await bot.send_video_note(telegram_id, cached)
+                        sent_message = await bot.send_video_note(telegram_id, cached, reply_markup=kb)
                     elif cached and ctype == "photo":
-                        sent_message = await bot.send_photo(telegram_id, cached, caption=msg.get("text_content"))
+                        sent_message = await bot.send_photo(telegram_id, cached, caption=msg.get("text_content"), reply_markup=kb)
                     elif cached and ctype == "video":
-                        sent_message = await bot.send_video(telegram_id, cached, caption=msg.get("text_content"))
+                        sent_message = await bot.send_video(telegram_id, cached, caption=msg.get("text_content"), reply_markup=kb)
                     elif cached and ctype == "document":
-                        sent_message = await bot.send_document(telegram_id, cached, caption=msg.get("text_content"))
+                        sent_message = await bot.send_document(telegram_id, cached, caption=msg.get("text_content"), reply_markup=kb)
                     elif msg["content_type"] == "text" and msg.get("text_content"):
-                        sent_message = await bot.send_message(telegram_id, msg["text_content"], reply_to_message_id=tg_reply_to)
+                        sent_message = await bot.send_message(telegram_id, msg["text_content"], reply_to_message_id=tg_reply_to, reply_markup=kb)
                     elif msg["content_type"] == "photo" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     photo_data = await resp.read()
                                     photo_file = BufferedInputFile(photo_data, filename="photo.jpg")
-                                    sent_message = await bot.send_photo(telegram_id, photo_file, caption=msg.get("text_content"))
+                                    sent_message = await bot.send_photo(telegram_id, photo_file, caption=msg.get("text_content"), reply_markup=kb)
                     elif msg["content_type"] == "video" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
@@ -1090,14 +1102,14 @@ async def send_expert_messages():
                                         if os.path.exists(output_path):
                                             os.unlink(output_path)
                                     
-                                    sent_message = await bot.send_voice(telegram_id, voice_file)
+                                    sent_message = await bot.send_voice(telegram_id, voice_file, reply_markup=kb)
                     elif msg["content_type"] == "document" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
                                 if resp.status == 200:
                                     doc_data = await resp.read()
                                     doc_file = BufferedInputFile(doc_data, filename=msg.get("file_name", "document"))
-                                    sent_message = await bot.send_document(telegram_id, doc_file, caption=msg.get("text_content"))
+                                    sent_message = await bot.send_document(telegram_id, doc_file, caption=msg.get("text_content"), reply_markup=kb)
                     elif msg["content_type"] == "video_note" and msg.get("file_url"):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(msg["file_url"]) as resp:
@@ -1144,7 +1156,7 @@ async def send_expert_messages():
                                         if os.path.exists(output_path):
                                             os.unlink(output_path)
                                     
-                                    sent_message = await bot.send_video_note(telegram_id, video_file)
+                                    sent_message = await bot.send_video_note(telegram_id, video_file, reply_markup=kb)
                     
                     if not cached:
                         remember_file_id(file_url, sent_message)
@@ -1430,6 +1442,38 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "Multi-Bot Diagnostic API", "active_bots": len(active_bots)}
+
+
+@app.get("/r/{broadcast_id}/{client_id}")
+async def track_click(broadcast_id: str, client_id: str):
+    """Перехід по кнопці з розсилки: фіксуємо і відправляємо далі.
+
+    Telegram не повідомляє про натискання кнопок-посилань, тому єдиний
+    спосіб порахувати — провести людину через себе. Робимо це швидко
+    і НІКОЛИ не ламаємось: якщо запис не вдався, людина все одно
+    потрапить куди йшла.
+    """
+    target = None
+    try:
+        res = (supabase.table("broadcasts").select("link_url")
+               .eq("id", broadcast_id).limit(1).execute())
+        if res.data:
+            target = res.data[0].get("link_url")
+    except Exception as e:
+        logger.error(f"track_click: не дістав посилання: {e}")
+
+    if not target:
+        return RedirectResponse(url="https://t.me/" + (BOT_USERNAME_FALLBACK or ""), status_code=302)
+
+    try:
+        supabase.table("broadcast_clicks").insert({
+            "broadcast_id": broadcast_id,
+            "client_id": client_id,
+        }).execute()
+    except Exception as e:
+        logger.error(f"track_click: не записав перехід: {e}")
+
+    return RedirectResponse(url=target, status_code=302)
 
 
 @app.get("/health")

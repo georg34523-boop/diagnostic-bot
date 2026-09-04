@@ -1688,15 +1688,45 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [caption, setCaption] = useState('');
   const [tplFilter, setTplFilter] = useState('all');
-  const [delayMin, setDelayMin] = useState(0);   // через скільки хвилин надіслати
+  // Час відправки: '' = одразу, інакше 'ГГ:ХХ' за Києвом
+  const [sendAt, setSendAt] = useState('');
+  // Кнопка-посилання під повідомленням
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkText, setLinkText] = useState('Приєднатися');
+  // Тестова розсилка на кількох конкретних людей
+  const [testMode, setTestMode] = useState(false);
+  const [testPicked, setTestPicked] = useState([]);   // масив id клієнтів
+  const [testSearch, setTestSearch] = useState('');
 
   const tplIcon = (t) => t === 'voice' ? '🎤' : t === 'video_note' ? '⭕' : t === 'photo' ? '📷' : t === 'video' ? '🎬' : '📝';
   const visibleTemplates = templates.filter(t => tplFilter === 'all' || t.type === tplFilter);
 
-  const filtered = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
+  const byStatus = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
+  // У тестовому режимі отримувачі — тільки вручну відмічені люди.
+  const filtered = testMode ? clients.filter(c => testPicked.includes(c.id)) : byStatus;
   const toggleStatus = (s) => setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  const togglePicked = (id) => setTestPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  const canSend = filtered.length > 0 && (mode === 'text' ? !!message.trim() : !!selectedTemplate);
+  const nameOf = (c) => (c.first_name || '') + (c.last_name ? ' ' + c.last_name : '')
+                        || (c.telegram_username ? '@' + c.telegram_username : '') || c.phone || 'без імені';
+  const searchHits = testSearch.trim()
+    ? clients.filter(c => (nameOf(c) + ' ' + (c.telegram_username || '') + ' ' + (c.phone || ''))
+        .toLowerCase().includes(testSearch.trim().toLowerCase())).slice(0, 20)
+    : [];
+
+  // Обраний час → абсолютна мітка. Якщо час уже минув сьогодні, це завтра.
+  const scheduledDate = (() => {
+    if (!sendAt) return null;
+    const [h, m] = sendAt.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return d;
+  })();
+
+  const linkOk = !linkUrl.trim() || /^https?:\/\//i.test(linkUrl.trim());
+  const canSend = filtered.length > 0 && linkOk
+    && (mode === 'text' ? !!message.trim() : !!selectedTemplate);
 
   // Попередження при спробі закрити/оновити сторінку під час розсилки
   useEffect(() => {
@@ -1709,13 +1739,21 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const handleSend = async () => {
     if (!canSend) return;
     const what = mode === 'text' ? 'повідомлення' : `шаблон «${selectedTemplate.title}»`;
-    const when = delayMin > 0 ? ` через ${delayMin} хв` : '';
-    if (!confirm(`Надіслати ${what} ${filtered.length} клієнтам${when}?`)) return;
+    const when = scheduledDate
+      ? ` о ${scheduledDate.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+      : ' зараз';
+    if (!confirm(`Надіслати ${what} ${filtered.length} ${testMode ? 'тестовим ' : ''}отримувачам${when}?`)) return;
     setSending(true);
     try {
+      const common = {
+        scheduledAt: scheduledDate ? scheduledDate.toISOString() : null,
+        linkUrl: linkUrl.trim() || null,
+        linkText: linkText.trim() || 'Приєднатися',
+        isTest: testMode,
+      };
       const payload = mode === 'template'
-        ? { type: 'template', template: selectedTemplate, text: caption, delayMinutes: delayMin }
-        : { type: 'text', text: message, delayMinutes: delayMin };
+        ? { type: 'template', template: selectedTemplate, text: caption, ...common }
+        : { type: 'text', text: message, ...common };
       const res = await onSendBroadcast(payload, filtered.map(c => c.id));
       setResult({ success: true, count: res.count });
       setMessage('');
@@ -1747,7 +1785,48 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
           <button onClick={() => setSelectedStatuses([])} className={`px-4 py-2 rounded-lg text-sm ${selectedStatuses.length === 0 ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>Всі ({clients.length})</button>
           {Object.entries(STATUSES).map(([key, { label }]) => <button key={key} onClick={() => toggleStatus(key)} className={`px-4 py-2 rounded-lg text-sm ${selectedStatuses.includes(key) ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>{label}</button>)}
         </div>
-        <div className="text-zinc-500 text-sm">Отримувачів: <span className="text-white font-medium">{filtered.length}</span></div>
+        <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
+          <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} className="w-4 h-4 accent-emerald-500" />
+          <span className="text-zinc-300 text-sm">Тестова розсилка — надіслати лише обраним людям</span>
+        </label>
+
+        {testMode && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 mb-3">
+            <input
+              value={testSearch} onChange={(e) => setTestSearch(e.target.value)}
+              placeholder="Знайти за ім'ям, @нікнеймом або телефоном…"
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder-zinc-600 text-sm mb-3"
+            />
+            {searchHits.length > 0 && (
+              <div className="max-h-52 overflow-y-auto mb-3 divide-y divide-zinc-800">
+                {searchHits.map(c => (
+                  <label key={c.id} className="flex items-center gap-3 py-2 cursor-pointer">
+                    <input type="checkbox" checked={testPicked.includes(c.id)} onChange={() => togglePicked(c.id)} className="w-4 h-4 accent-emerald-500" />
+                    <span className="text-zinc-200 text-sm">{nameOf(c)}</span>
+                    {c.telegram_username && <span className="text-zinc-600 text-xs">@{c.telegram_username}</span>}
+                  </label>
+                ))}
+              </div>
+            )}
+            {testPicked.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {clients.filter(c => testPicked.includes(c.id)).map(c => (
+                  <span key={c.id} className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs">
+                    {nameOf(c)}
+                    <button type="button" onClick={() => togglePicked(c.id)} className="text-emerald-400 hover:text-white">×</button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-zinc-600 text-xs">Знайдіть і відмітьте людей — розсилка піде тільки їм.</p>
+            )}
+          </div>
+        )}
+
+        <div className="text-zinc-500 text-sm">
+          Отримувачів: <span className={`font-medium ${testMode ? 'text-emerald-400' : 'text-white'}`}>{filtered.length}</span>
+          {testMode && <span className="text-zinc-600"> — тестовий режим</span>}
+        </div>
       </div>
       
       <div className="bg-zinc-900 rounded-2xl p-6 border border-zinc-800 mb-6">
@@ -1804,31 +1883,49 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
           </div>
         )}
 
-        {/* Затримка: щоб поставити другий лист у чергу одразу за першим,
-            не чекаючи біля комп'ютера. Час рахується від натискання кнопки. */}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-zinc-400 text-sm">Надіслати через</span>
-          <input
-            type="number" min="0" max="1440" value={delayMin}
-            onChange={(e) => setDelayMin(Math.max(0, Math.min(1440, Number(e.target.value) || 0)))}
-            className="w-20 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-center"
-          />
-          <span className="text-zinc-400 text-sm">хв</span>
-          {[0, 2, 5, 15].map(m => (
-            <button key={m} type="button" onClick={() => setDelayMin(m)}
-              className={`px-3 py-1.5 rounded-lg text-sm ${delayMin === m ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}>
-              {m === 0 ? 'одразу' : `${m} хв`}
-            </button>
-          ))}
+        {/* Кнопка-посилання. Ведемо через свій редирект — тільки так
+            можна порахувати переходи: Telegram про натискання не повідомляє. */}
+        <div className="border-t border-zinc-800 pt-4 mb-4">
+          <label className="text-xs text-zinc-500 mb-2 block">Кнопка з посиланням (необов'язково)</label>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="https://…"
+              className={`flex-1 px-3 py-2 bg-zinc-950 border rounded-lg text-white placeholder-zinc-600 text-sm ${linkOk ? 'border-zinc-800' : 'border-red-500'}`}
+            />
+            <input
+              value={linkText} onChange={(e) => setLinkText(e.target.value)}
+              placeholder="Напис на кнопці"
+              className="sm:w-52 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white placeholder-zinc-600 text-sm"
+            />
+          </div>
+          {!linkOk && <p className="text-red-400 text-xs mt-1">Посилання має починатися з http:// або https://</p>}
+          {linkUrl.trim() && linkOk && (
+            <p className="text-zinc-600 text-xs mt-2">Під повідомленням буде кнопка «{linkText || 'Приєднатися'}». Переходи рахуються.</p>
+          )}
         </div>
-        {delayMin > 0 && (
-          <p className="text-zinc-500 text-sm mb-4">
-            Піде о {new Date(Date.now() + delayMin * 60000).toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit' })}.
-            Вкладку можна закрити — черга живе на сервері.
-          </p>
-        )}
 
-        <button onClick={handleSend} disabled={sending || !canSend} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : delayMin > 0 ? `Поставити в чергу (через ${delayMin} хв)` : 'Надіслати'}</button>
+        {/* Час відправки. Живе в базі, тож вкладку можна закрити. */}
+        <div className="border-t border-zinc-800 pt-4 mb-4">
+          <label className="text-xs text-zinc-500 mb-2 block">Коли надіслати</label>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={() => setSendAt('')}
+              className={`px-4 py-2 rounded-lg text-sm ${!sendAt ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}>
+              Зараз
+            </button>
+            <span className="text-zinc-600 text-sm">або о</span>
+            <input type="time" value={sendAt} onChange={(e) => setSendAt(e.target.value)}
+              className="px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-sm" />
+          </div>
+          {scheduledDate && (
+            <p className="text-zinc-500 text-sm mt-2">
+              Піде {scheduledDate.toLocaleString('uk-UA', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}.
+              Вкладку можна закрити — черга живе на сервері.
+            </p>
+          )}
+        </div>
+
+        <button onClick={handleSend} disabled={sending || !canSend} className="px-6 py-3 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black font-medium rounded-xl">{sending ? 'Надсилаю...' : scheduledDate ? `Запланувати на ${sendAt}` : 'Надіслати зараз'}</button>
       </div>
       
       {/* Статистика */}
@@ -1859,6 +1956,13 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
                     <div className="flex items-center gap-3 text-xs text-zinc-500">
                       <span>{formatDate(b.created_at)}</span>
                       <span className="text-emerald-400">{b.recipients_count} отримувачів</span>
+                      {b.is_test && <span className="px-2 py-0.5 bg-zinc-800 rounded text-zinc-400">тест</span>}
+                      {b.scheduled_at && <span className="text-sky-400">за розкладом на {formatDate(b.scheduled_at)}</span>}
+                      {b.link_url && (
+                        <span className="text-amber-400">
+                          👆 {b.clicked} {b.recipients_count ? `(${Math.round(b.clicked / b.recipients_count * 100)}%)` : ''} перейшли
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button onClick={() => onDeleteBroadcast(b.id)} className="p-1.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" title="Видалити">
@@ -2576,7 +2680,20 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
   const loadBroadcasts = async () => {
     if (!activeBot) return;
     const { data } = await supabase.from('broadcasts').select('*').eq('bot_id', activeBot.id).order('created_at', { ascending: false }).limit(50);
-    setBroadcasts(data || []);
+    const list = data || [];
+
+    // Переходи по кнопці. Рахуємо унікальних людей, а не всі кліки:
+    // одна людина може відкрити посилання кілька разів.
+    const ids = list.filter(b => b.link_url).map(b => b.id);
+    const uniq = {};
+    if (ids.length) {
+      const { data: clicks } = await supabase
+        .from('broadcast_clicks').select('broadcast_id, client_id').in('broadcast_id', ids);
+      (clicks || []).forEach(c => {
+        (uniq[c.broadcast_id] = uniq[c.broadcast_id] || new Set()).add(c.client_id);
+      });
+    }
+    setBroadcasts(list.map(b => ({ ...b, clicked: uniq[b.id] ? uniq[b.id].size : 0 })));
   };
 
   const loadMessages = async (clientId) => {
@@ -2780,15 +2897,43 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     const tpl = data.template;
 
     // Формуємо рядок повідомлення один раз
-    // Затримка живе в базі (scheduled_at), а не в браузері: поллер бота
-    // сам не візьме рядок раніше часу. Тому вкладку можна закривати.
-    const delayMinutes = Number(data.delayMinutes) || 0;
-    const scheduledAt = delayMinutes > 0
-      ? new Date(Date.now() + delayMinutes * 60000).toISOString()
-      : null;
+    // Час відправки живе в базі, а не в браузері: поллер бота сам
+    // не візьме рядок раніше часу. Тому вкладку можна закривати.
+    const scheduledAt = data.scheduledAt || null;
+
+    // Кнопка веде на наш редирект, а не одразу на сайт — інакше переходи
+    // не порахувати. Посилання своє в кожного, щоб бачити саме людей.
+    const linkUrl = data.linkUrl || null;
+    const linkText = data.linkText || 'Приєднатися';
+    const btnFor = (clientId) => linkUrl ? `${API_URL}/r/${broadcastId}/${clientId}` : null;
+
+    // Рядок історії створюємо ПЕРШИМ: редирект шукає посилання саме в ньому,
+    // і якщо хтось натисне кнопку раніше, ніж він з'явиться, перехід
+    // нікуди не приведе.
+    const historyText0 = isTemplate
+      ? `${tpl.type === 'voice' ? '🎤' : tpl.type === 'video_note' ? '⭕' : tpl.type === 'photo' ? '📷' : tpl.type === 'video' ? '🎬' : '📝'} Шаблон: ${tpl.title}${data.text ? ' — ' + data.text : ''}`
+      : data.text;
+    await supabase.from('broadcasts').insert({
+      id: broadcastId,
+      bot_id: activeBot?.id,
+      expert_id: expertId,
+      message_text: historyText0,
+      recipients_count: clientIds.length,
+      client_ids: clientIds,
+      status_filter: null,
+      link_url: linkUrl,
+      link_text: linkUrl ? linkText : null,
+      scheduled_at: scheduledAt,
+      is_test: !!data.isTest,
+    });
 
     const buildRow = (clientId) => {
-      const row = { client_id: clientId, direction: 'expert', is_read: false, scheduled_at: scheduledAt };
+      const row = {
+        client_id: clientId, direction: 'expert', is_read: false,
+        scheduled_at: scheduledAt,
+        button_text: linkUrl ? linkText : null,
+        button_url: btnFor(clientId),
+      };
       if (isTemplate) {
         if (tpl.type === 'text') {
           row.content_type = 'text';
@@ -2817,23 +2962,9 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
       count += batch.length;
     }
 
-    // Текст для історії розсилок
-    const historyText = isTemplate
-      ? `${tpl.type === 'voice' ? '🎤' : tpl.type === 'video_note' ? '⭕' : tpl.type === 'photo' ? '📷' : tpl.type === 'video' ? '🎬' : '📝'} Шаблон: ${tpl.title}${data.text ? ' — ' + data.text : ''}`
-      : data.text;
+    // Історію вже створено вище — лишилось оновити фактичну кількість
+    await supabase.from('broadcasts').update({ recipients_count: count }).eq('id', broadcastId);
 
-    // Зберігаємо історію розсилки
-    await supabase.from('broadcasts').insert({
-      id: broadcastId,
-      bot_id: activeBot?.id,
-      expert_id: expertId,
-      message_text: historyText,
-      recipients_count: count,
-      client_ids: clientIds,
-      status_filter: null
-    });
-    
-    // Завантажуємо історію
     loadBroadcasts();
     
     return { count };
