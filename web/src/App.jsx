@@ -1697,13 +1697,65 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
   const [testMode, setTestMode] = useState(false);
   const [testPicked, setTestPicked] = useState([]);   // масив id клієнтів
   const [testSearch, setTestSearch] = useState('');
+  // Сегмент за попередньою розсилкою: кому вже йшло / хто натискав
+  const [segId, setSegId] = useState('');        // id обраної розсилки
+  const [segMode, setSegMode] = useState('none'); // none | exclude | noclick | clicked
+  const [segClicked, setSegClicked] = useState([]); // хто натиснув у тій розсилці
+  const [excludeList, setExcludeList] = useState('');  // кого прибрати вручну (напр. тих, хто вже купив)
+
+  // Підтягуємо натискання обраної розсилки
+  useEffect(() => {
+    if (!segId) { setSegClicked([]); return; }
+    let alive = true;
+    supabase.from('broadcast_clicks').select('client_id').eq('broadcast_id', segId)
+      .then(({ data }) => { if (alive) setSegClicked([...new Set((data || []).map(r => r.client_id))]); });
+    return () => { alive = false; };
+  }, [segId]);
 
   const tplIcon = (t) => t === 'voice' ? '🎤' : t === 'video_note' ? '⭕' : t === 'photo' ? '📷' : t === 'video' ? '🎬' : '📝';
   const visibleTemplates = templates.filter(t => tplFilter === 'all' || t.type === tplFilter);
 
-  const byStatus = clients.filter(c => selectedStatuses.length === 0 || selectedStatuses.includes(c.status));
+  // Заблокованих не беремо: бот однаково отримає відмову, а база
+  // виглядатиме більшою, ніж є, і конверсія буде заниженою.
+  const alive = clients.filter(c => !c.is_blocked);
+  const blockedCount = clients.length - alive.length;
+
+  // Ручний список виключень: телефони, @нікнейми або id, по одному в рядок.
+  // Телефони порівнюємо лише за цифрами — формати у всіх різні.
+  const excluded = (() => {
+    const raw = excludeList.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+    if (!raw.length) return new Set();
+    const digits = new Set(raw.map(x => x.replace(/\D/g, '')).filter(x => x.length >= 9));
+    const names = new Set(raw.map(x => x.replace(/^@/, '').toLowerCase()).filter(x => /[a-z_]/i.test(x)));
+    const out = new Set();
+    clients.forEach(c => {
+      const ph = (c.phone || '').replace(/\D/g, '');
+      const un = (c.telegram_username || '').toLowerCase();
+      const tg = String(c.telegram_id || '');
+      if ((ph && digits.has(ph)) || (un && names.has(un)) || (tg && digits.has(tg))) out.add(c.id);
+    });
+    return out;
+  })();
+
+  const byStatus = alive.filter(c => (selectedStatuses.length === 0 || selectedStatuses.includes(c.status))
+                                     && !excluded.has(c.id));
+
+  // Сегмент за попередньою розсилкою. Нічого не треба проставляти руками:
+  // кому вона йшла — записано в самій розсилці, хто натиснув — у переходах.
+  const segBroadcast = broadcasts.find(b => b.id === segId);
+  const segRecipients = Array.isArray(segBroadcast?.client_ids) ? segBroadcast.client_ids : [];
+  const applySegment = (list) => {
+    if (!segId || segMode === 'none' || !segBroadcast) return list;
+    const got = new Set(segRecipients);
+    const clicked = new Set(segClicked);
+    if (segMode === 'exclude') return list.filter(c => !got.has(c.id));
+    if (segMode === 'noclick') return list.filter(c => got.has(c.id) && !clicked.has(c.id));
+    if (segMode === 'clicked') return list.filter(c => clicked.has(c.id));
+    return list;
+  };
+
   // У тестовому режимі отримувачі — тільки вручну відмічені люди.
-  const filtered = testMode ? clients.filter(c => testPicked.includes(c.id)) : byStatus;
+  const filtered = testMode ? alive.filter(c => testPicked.includes(c.id)) : applySegment(byStatus);
   const toggleStatus = (s) => setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
   const togglePicked = (id) => setTestPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
@@ -1791,6 +1843,54 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
           <button onClick={() => setSelectedStatuses([])} className={`px-4 py-2 rounded-lg text-sm ${selectedStatuses.length === 0 ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>Всі ({clients.length})</button>
           {Object.entries(STATUSES).map(([key, { label }]) => <button key={key} onClick={() => toggleStatus(key)} className={`px-4 py-2 rounded-lg text-sm ${selectedStatuses.includes(key) ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>{label}</button>)}
         </div>
+        {/* Сегмент за попередньою розсилкою. Нічого не позначаємо руками —
+            система вже знає, кому що йшло і хто натискав кнопку. */}
+        {!testMode && broadcasts.length > 0 && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 mb-4">
+            <label className="text-xs text-zinc-500 mb-2 block">Звʼязок з попередньою розсилкою</label>
+            <select
+              value={segId}
+              onChange={(e) => { setSegId(e.target.value); if (!e.target.value) setSegMode('none'); else if (segMode === 'none') setSegMode('noclick'); }}
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm mb-3"
+            >
+              <option value="">— не враховувати —</option>
+              {broadcasts.slice(0, 20).map(b => (
+                <option key={b.id} value={b.id}>
+                  {formatDate(b.created_at)} · {(b.message_text || '').slice(0, 40)}
+                </option>
+              ))}
+            </select>
+
+            {segId && (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    ['noclick', 'Кому йшло, але не натиснули'],
+                    ['exclude', 'Кому ще НЕ надсилали'],
+                    ['clicked', 'Тільки ті, хто натиснув'],
+                  ].map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => setSegMode(k)}
+                      className={`px-3 py-1.5 rounded-lg text-sm ${segMode === k ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {!segBroadcast?.link_url && segMode !== 'exclude' && (
+                  <p className="text-amber-400 text-xs mt-2">
+                    У тій розсилці не було кнопки — натискань по ній немає, тож цей відбір дасть порожньо.
+                    Для неї працює лише «кому ще НЕ надсилали».
+                  </p>
+                )}
+                {segBroadcast?.link_url && (
+                  <p className="text-zinc-600 text-xs mt-2">
+                    Отримали: {segRecipients.length} · натиснули: {segClicked.length}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
           <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} className="w-4 h-4 accent-emerald-500" />
           <span className="text-zinc-300 text-sm">Тестова розсилка — надіслати лише обраним людям</span>
@@ -1829,9 +1929,35 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
           </div>
         )}
 
+        {!testMode && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 mb-4">
+            <label className="text-xs text-zinc-500 mb-2 block">
+              Виключити вручну — наприклад, тих, хто вже купив
+            </label>
+            <textarea
+              value={excludeList} onChange={(e) => setExcludeList(e.target.value)} rows={3}
+              placeholder={'380971234567\n@nickname\n380501112233'}
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-white placeholder-zinc-600 text-sm resize-y font-mono"
+            />
+            <p className="text-zinc-600 text-xs mt-2">
+              Телефони, @нікнейми або Telegram-id — по одному в рядок або через кому.
+              Телефони звіряються лише за цифрами, формат не важливий.
+              {excluded.size > 0 && <span className="text-amber-400"> Знайдено й прибрано: {excluded.size}.</span>}
+            </p>
+          </div>
+        )}
+
         <div className="text-zinc-500 text-sm">
           Отримувачів: <span className={`font-medium ${testMode ? 'text-emerald-400' : 'text-white'}`}>{filtered.length}</span>
+          {blockedCount > 0 && <span className="text-zinc-600"> · заблокували бота: {blockedCount}, їх пропускаємо</span>}
           {testMode && <span className="text-zinc-600"> — тестовий режим</span>}
+          {!testMode && segId && segMode !== 'none' && (
+            <span className="text-zinc-600">
+              {segMode === 'noclick' && ' — не натиснули кнопку'}
+              {segMode === 'exclude' && ' — ще не отримували ту розсилку'}
+              {segMode === 'clicked' && ' — натиснули кнопку'}
+            </span>
+          )}
         </div>
       </div>
       

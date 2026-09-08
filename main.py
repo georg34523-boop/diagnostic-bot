@@ -224,14 +224,18 @@ async def get_or_create_client(user: types.User, bot_id: str, expert_id: str, em
     ).eq("bot_id", bot_id).execute()
     
     if result.data:
-        if email or phone:
-            update_data = {}
-            if email:
-                update_data["email"] = email
-            if phone:
-                update_data["phone"] = phone
-            if update_data:
-                supabase.table("clients").update(update_data).eq("telegram_id", user.id).eq("bot_id", bot_id).execute()
+        update_data = {}
+        if email:
+            update_data["email"] = email
+        if phone:
+            update_data["phone"] = phone
+        # Людина знову пише — отже, розблокувала бота. Знімаємо позначку,
+        # інакше вона назавжди випала б з розсилок через давню блокування.
+        if result.data[0].get("is_blocked"):
+            update_data["is_blocked"] = False
+            update_data["blocked_at"] = None
+        if update_data:
+            supabase.table("clients").update(update_data).eq("telegram_id", user.id).eq("bot_id", bot_id).execute()
         return result.data[0]
     
     new_client = {
@@ -1182,6 +1186,18 @@ async def send_expert_messages():
                     logger.info(f"Пропускаю {telegram_id}: {e}")
                     supabase.table("messages").update({"is_read": True}).eq("id", msg["id"]).execute()
                     processed_ids.add(msg["id"])
+
+                    # Запам'ятовуємо, щоб не стукати до цієї людини щоразу.
+                    # Тільки для Forbidden: BadRequest буває і з інших причин
+                    # (завеликий файл, зіпсований підпис) — там людина ні до чого.
+                    if isinstance(e, TelegramForbiddenError) and msg.get("client_id"):
+                        try:
+                            supabase.table("clients").update({
+                                "is_blocked": True,
+                                "blocked_at": datetime.now(timezone.utc).isoformat(),
+                            }).eq("id", msg["client_id"]).execute()
+                        except Exception as mark_err:
+                            logger.warning(f"Не позначив блокування: {mark_err}")
                 except Exception as e:
                     # Тимчасовий збій — лишаємо непрочитаним і пробуємо ще,
                     # але не нескінченно: після трьох спроб здаємось.
