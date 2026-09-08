@@ -165,7 +165,18 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
   const [search, setSearch] = useState('');
   // Час останньої активності: спершу час останнього повідомлення, потім updated_at, потім created_at
   const lastActivity = (c) => new Date(lastMessages?.[c.id]?.created_at || c.updated_at || c.created_at).getTime() || 0;
-  const filtered = clients.filter(c => filter === 'all' || c.status === filter).filter(c => !search || c.first_name?.toLowerCase().includes(search.toLowerCase()) || c.last_name?.toLowerCase().includes(search.toLowerCase()) || c.telegram_username?.toLowerCase().includes(search.toLowerCase())).sort((a, b) => lastActivity(b) - lastActivity(a));
+  const unreadOf = (c) => unreadCounts?.[c.id] || 0;
+  const filtered = clients
+    .filter(c => filter === 'all' ? true : filter === 'unread' ? unreadOf(c) > 0 : c.status === filter)
+    .filter(c => !search || c.first_name?.toLowerCase().includes(search.toLowerCase()) || c.last_name?.toLowerCase().includes(search.toLowerCase()) || c.telegram_username?.toLowerCase().includes(search.toLowerCase()))
+    // Непрочитані завжди зверху: інакше питання людини тоне під тими,
+    // кому щойно щось надіслали, і губиться до наступного дня.
+    .sort((a, b) => {
+      const ua = unreadOf(a) > 0 ? 1 : 0, ub = unreadOf(b) > 0 ? 1 : 0;
+      if (ua !== ub) return ub - ua;
+      return lastActivity(b) - lastActivity(a);
+    });
+  const unreadTotal = clients.filter(c => unreadOf(c) > 0).length;
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
@@ -174,6 +185,8 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
       </div>
       <div className="p-3 border-b border-zinc-800 flex flex-wrap gap-2">
         <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === 'all' ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>Всі ({clients.length})</button>
+        {/* Окрема вкладка, щоб непрочитане можна було відкрити одним дотиком */}
+        <button onClick={() => setFilter('unread')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === 'unread' ? 'bg-emerald-500 text-black' : unreadTotal > 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-zinc-800 text-zinc-400'}`}>💬 Непрочитані ({unreadTotal})</button>
         {Object.entries(STATUSES).map(([key, { short }]) => {
           const count = clients.filter(c => c.status === key).length;
           return <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${filter === key ? 'bg-white text-black' : 'bg-zinc-800 text-zinc-400'}`}>{short} ({count})</button>;
@@ -191,7 +204,9 @@ const ClientList = ({ clients, selectedClient, onSelectClient, unreadCounts, las
                 <div className="w-11 h-11 rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 flex items-center justify-center text-white font-medium text-lg">{client.first_name?.[0] || '?'}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between"><span className="font-medium text-white truncate">{client.first_name} {client.last_name}</span><span className="text-xs text-zinc-500">{formatDate(lastMsg?.created_at || client.updated_at)}</span></div>
-                  <div className="flex items-center justify-between mt-1"><span className="text-sm text-zinc-500 truncate">{preview || 'Немає повідомлень'}</span>{unread > 0 && <span className="bg-emerald-500 text-black text-xs font-bold px-2 py-0.5 rounded-full ml-2">{unread}</span>}</div>
+                  {/* ⏳ — лист створено, але Telegram його ще не прийняв.
+                      Без цієї позначки черга виглядає як уже надіслане. */}
+                  <div className="flex items-center justify-between mt-1"><span className="text-sm text-zinc-500 truncate">{lastMsg?.pending && <span className="text-amber-500" title="Ще не надіслано">⏳ </span>}{preview || 'Немає повідомлень'}</span>{unread > 0 && <span className="bg-emerald-500 text-black text-xs font-bold px-2 py-0.5 rounded-full ml-2">{unread}</span>}</div>
                 </div>
               </div>
             </div>
@@ -2874,7 +2889,7 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
     for (const p of previews) {
       unread[p.id] = Number(p.unread_count) || 0;
       if (p.last_created_at) {
-        last[p.id] = { created_at: p.last_created_at, content_type: p.last_content_type, text_content: p.last_text_content };
+        last[p.id] = { created_at: p.last_created_at, content_type: p.last_content_type, text_content: p.last_text_content, pending: p.last_pending };
       }
     }
     setUnreadCounts(unread);
