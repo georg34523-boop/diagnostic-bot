@@ -888,31 +888,33 @@ async def send_expert_messages():
     
     while True:
         try:
-            # Беремо найстаріші неnadіслані повідомлення експерта.
-            # Фільтр за часом НЕ можна робити запитом: у supabase 2.0.0
-            # у построювача немає .or_(), і виклик валив увесь цикл —
-            # жодне повідомлення не йшло. Тому відсіюємо вже в Python.
-            result = (supabase.table("messages")
-                      .select("*, clients(telegram_id, expert_id)")
-                      .eq("direction", "expert").eq("is_read", False)
-                      .order("created_at")
-                      .limit(500)
-                      .execute())
-
-            # scheduled_at — час, раніше якого надсилати не можна.
-            # Порожній у звичайних відповідей (йдуть одразу),
-            # заповнений у розсилок із затримкою.
+            # Беремо тільки те, що вже МОЖНА надсилати.
+            # Раніше час відсівався в Python, і це поклало базу: 1279
+            # запланованих на вечір рядків потрапляли у вибірку щоцикла,
+            # запит важчав до 1,7 с при паузі 3 с — інстанс задихнувся,
+            # і адмінка перестала вантажити клієнтів.
+            # Одним запитом не вийде: у supabase 2.0.0 немає .or_(),
+            # тому робимо два — обидва лягають на messages_pending_idx.
             now_utc = datetime.now(timezone.utc)
-            pending = []
-            for m in (result.data or []):
-                sched = m.get("scheduled_at")
-                if sched:
-                    try:
-                        if datetime.fromisoformat(sched.replace("Z", "+00:00")) > now_utc:
-                            continue          # ще рано
-                    except Exception:
-                        pass                  # незрозуміла дата — краще надіслати
-                pending.append(m)
+
+            def _due(builder):
+                return (builder.select("*, clients(telegram_id, expert_id)")
+                        .eq("direction", "expert").eq("is_read", False))
+
+            # Звичайні відповіді експерта — без часу, йдуть одразу
+            immediate = (_due(supabase.table("messages"))
+                         .is_("scheduled_at", "null")
+                         .order("created_at").limit(300).execute())
+            # Розсилки, чий час уже настав
+            scheduled = (_due(supabase.table("messages"))
+                         .lte("scheduled_at", now_utc.isoformat())
+                         .order("created_at").limit(300).execute())
+
+            # Об'єднуємо, прибираємо можливі дублі й шлемо в порядку створення
+            merged = {}
+            for m in (immediate.data or []) + (scheduled.data or []):
+                merged[m["id"]] = m
+            pending = sorted(merged.values(), key=lambda m: m.get("created_at") or "")
 
             if not pending:
                 empty_polls += 1

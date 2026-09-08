@@ -6,6 +6,58 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 const supabase = createClient(supabaseUrl, supabaseKey);
 const RAILWAY_API_URL = 'https://diagnostic-bot-production.up.railway.app';
 
+// ── Ім'я для звертання ────────────────────────────────────────────
+// У Telegram люди пишуть собі що завгодно: «Nastya🪿», «Ольга | Логопед»,
+// «☠️», «NK». Підставляти як є не можна — одне «Привіт, ☠️!» псує всю
+// розсилку. Тому беремо ім'я лише тоді, коли впевнені, інакше звертання
+// прибираємо зовсім: без імені краще, ніж з чужим або зі сміттям.
+const cleanFirstName = (raw) => {
+  if (!raw) return null;
+  // Відрізаємо приписки на кшталт «| Онлайн логопед», «(мама)»
+  let s = String(raw).split(/[|/,•·()\[\]]/)[0];
+  // Геть емодзі, цифри, підкреслення — лишаємо літери, апостроф, дефіс
+  s = s.replace(/[^\p{L}\s'’-]/gu, ' ').trim();
+  const words = s.split(/\s+/).filter(Boolean);
+  // Свідомо лише латиниця й кирилиця. \p{L} пропускає декоративні
+  // шрифти на кшталт «𝓐𝓛» та «𝑰𝒚𝒂» — вони виглядають як літери,
+  // але звертання з них виходить нечитабельне.
+  const LET = "A-Za-z\u0400-\u04FF";
+  const nameRe = new RegExp(`^[${LET}][${LET}'’-]*$`);
+  const looksLikeName = (w) => nameRe.test(w) && w.length >= 3 && w.length <= 20;
+  // Аудиторія україномовна: якщо є кириличне слово — беремо його.
+  // Це рятує випадки «tati.suhak Татьяна», де перше слово — нікнейм.
+  // \u041F\u0440\u0456\u0437\u0432\u0438\u0449\u0435 \u044F\u043A \u0437\u0432\u0435\u0440\u0442\u0430\u043D\u043D\u044F \u0437\u0432\u0443\u0447\u0438\u0442\u044C \u0447\u0443\u0436\u043E: \u00AB\u041F\u0440\u0438\u0432\u0456\u0442, \u0411\u0435\u043A\u0448\u0435\u043D\u043E\u0432\u0430 \uD83D\uDC9B\u00BB.
+  // \u0416\u0456\u043D\u043E\u0447\u0438\u0445 \u0456\u043C\u0435\u043D \u043D\u0430 \u0446\u0456 \u0437\u0430\u043A\u0456\u043D\u0447\u0435\u043D\u043D\u044F \u043D\u0435 \u0431\u0443\u0432\u0430\u0454, \u0442\u043E\u0436 \u0432\u0456\u0434\u0441\u0456\u0432 \u0431\u0435\u0437\u043F\u0435\u0447\u043D\u0438\u0439.
+  // \u041F\u0435\u0440\u0435\u0432\u0456\u0440\u0435\u043D\u043E \u043D\u0430 \u0431\u0430\u0437\u0456: \u00AB\u041E\u043B\u0435\u043D\u043A\u0430\u00BB, \u00AB\u041B\u044E\u0431\u043E\u0432\u00BB, \u00AB\u0410\u0439\u0440\u0456\u043D\u00BB \u2014 \u0441\u043F\u0440\u0430\u0432\u0436\u043D\u0456 \u0456\u043C\u0435\u043D\u0430,
+  // \u0442\u043E\u043C\u0443 \u0437\u0430\u043A\u0456\u043D\u0447\u0435\u043D\u043D\u044F -\u0435\u043D\u043A\u0430, -\u043E\u0432, -\u0456\u043D \u0443 \u0441\u043F\u0438\u0441\u043A\u0443 \u043D\u0435\u043C\u0430\u0454
+  const surname = /(\u0435\u043D\u043A\u043E|\u043E\u0432\u0430|\u0435\u0432\u0430|\u0454\u0432\u0430|\u0441\u044C\u043A\u0430|\u0441\u043A\u0430\u044F|\u0446\u044C\u043A\u0430|\u0447\u0443\u043A|\u044E\u043A|enko|ova|eva|ska|skaya|chuk|iuk)$/i;
+  // Тільки для довгих слів: короткі «Єва», «Eva» — справжні імена
+  const good = (w) => looksLikeName(w) && !(w.length >= 5 && surname.test(w));
+  const cyr = words.find(w => good(w) && /[\u0400-\u04FF]/.test(w));
+  const word = cyr || words.find(good);
+  if (!word) return null;
+  // ВЕЛИКІ ЛІТЕРИ приводимо до звичайного вигляду, решту не чіпаємо:
+  // інакше «MaryCo» стало б «Maryco».
+  return word === word.toLocaleUpperCase('uk')
+    ? word[0] + word.slice(1).toLocaleLowerCase('uk')
+    : word[0].toLocaleUpperCase('uk') + word.slice(1);
+};
+
+// Підставляє ім'я, а якщо його немає — прибирає звертання і прибирає
+// за собою розділові знаки, щоб не лишилось «Привіт, !»
+const personalize = (text, client) => {
+  if (!text || !/\{[^}]*\}/.test(text)) return text;
+  const name = cleanFirstName(client?.first_name);
+  // Мітку ловимо разом з комою перед нею, щоб без імені не лишалось
+  // «Привіт, 💛» — прибираємо і кому: «Привіт 💛»
+  const PH = /[,  ]*\{\s*(ім'я|імя|imya|name|имя)\s*\}/giu;
+  const out = name
+    ? text.replace(PH, (m) => m.replace(/\{[^}]*\}/, name))
+    : text.replace(PH, '');
+  return out.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n');
+};
+
+
 const STATUSES = {
   new: { label: 'Новий', short: 'Новий', color: 'bg-zinc-500' },
   diagnostic_scheduled: { label: 'Діагн. запланована', short: '📅 Заплан', color: 'bg-sky-500' },
@@ -1776,6 +1828,25 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
     return d;
   })();
 
+  // Скільки людей у поточному сегменті отримають звертання на ім'я
+  const nameStats = (() => {
+    const total = filtered.length;
+    if (!total) return { total: 0, withName: 0, sample: null };
+    let withName = 0;
+    let sample = null;
+    for (const c of filtered) {
+      const n = cleanFirstName(c.first_name);
+      if (n) {
+        withName++;
+        if (!sample) sample = { who: n, text: personalize(message, c) };
+      }
+    }
+    // Якщо в сегменті взагалі нема розпізнаних імен — показуємо, як
+    // виглядатиме без звертання
+    if (!sample && filtered[0]) sample = { who: 'людина без імені', text: personalize(message, filtered[0]) };
+    return { total, withName, sample };
+  })();
+
   const linkOk = !linkUrl.trim() || /^https?:\/\//i.test(linkUrl.trim());
   const canSend = filtered.length > 0 && linkOk
     && (mode === 'text' ? !!message.trim() : !!selectedTemplate);
@@ -1969,7 +2040,28 @@ const Broadcast = ({ clients, onSendBroadcast, broadcasts = [], onDeleteBroadcas
         </div>
 
         {mode === 'text' ? (
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Текст повідомлення..." rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-4" />
+          <>
+            <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Текст повідомлення..." rows={4} className="w-full px-4 py-3 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 resize-none mb-2" />
+            <div className="flex items-center gap-3 mb-4 flex-wrap">
+              <button type="button" onClick={() => setMessage(m => m + "{ім'я}")}
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm">
+                + ім'я людини
+              </button>
+              {nameStats.total > 0 && message.includes('{') && (
+                <span className="text-zinc-500 text-xs">
+                  Звернемось на ім'я до <span className="text-emerald-400">{nameStats.withName}</span> з {nameStats.total}.
+                  {nameStats.total - nameStats.withName > 0 &&
+                    ` У ${nameStats.total - nameStats.withName} ім'я нерозпізнаване — звертання приберемо.`}
+                </span>
+              )}
+            </div>
+            {message.includes('{') && nameStats.sample && (
+              <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 mb-4">
+                <div className="text-xs text-zinc-500 mb-2">Як побачить {nameStats.sample.who}:</div>
+                <div className="text-zinc-200 text-sm whitespace-pre-wrap">{nameStats.sample.text}</div>
+              </div>
+            )}
+          </>
         ) : (
           <div className="mb-4">
             {/* Фільтр за типом */}
@@ -3059,6 +3151,8 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
       is_test: !!data.isTest,
     });
 
+    const clientById = new Map(clients.map(c => [c.id, c]));
+
     const buildRow = (clientId) => {
       const row = {
         client_id: clientId, direction: 'expert', is_read: false,
@@ -3075,11 +3169,13 @@ const ExpertDashboard = ({ expertId, expertName, onLogout, isAdminView = false }
           row.file_url = tpl.file_url;
           row.file_name = tpl.title || null;
           // Голосові та кружки Telegram надсилає без підпису
-          row.text_content = (tpl.type === 'voice' || tpl.type === 'video_note') ? null : (data.text || null);
+          row.text_content = (tpl.type === 'voice' || tpl.type === 'video_note')
+            ? null
+            : personalize(data.text || null, clientById.get(clientId));
         }
       } else {
         row.content_type = 'text';
-        row.text_content = data.text;
+        row.text_content = personalize(data.text, clientById.get(clientId));
       }
       return row;
     };
